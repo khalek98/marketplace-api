@@ -98,7 +98,17 @@ paths:
       description: >
         Creates an immutable order snapshot and reserves the requested stock.
       parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: >
+            Client-generated opaque key for safely retrying order creation. The
+            same key with the same request body returns the original 201 response;
+            reusing the key with a different body returns a 422 problem response.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 255
       requestBody:
         required: true
         content:
@@ -191,19 +201,6 @@ components:
       description: Stable order identifier.
       schema:
         $ref: "#/components/schemas/ResourceId"
-    IdempotencyKey:
-      name: Idempotency-Key
-      in: header
-      required: true
-      description: >
-        Client-generated opaque key for safely retrying order creation. The
-        same key with the same request body returns the original 201 response;
-        reusing the key with a different body returns a 422 problem response.
-      schema:
-        type: string
-        minLength: 1
-        maxLength: 255
-
   responses:
     BadRequest:
       description: The request does not satisfy the API contract.
