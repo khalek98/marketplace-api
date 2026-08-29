@@ -4,6 +4,10 @@
   "description": "Marketplace API (course project)",
   "private": true,
   "type": "module",
+  "scripts": {
+    "openapi:lint": "redocly lint openapi/openapi.yaml",
+    "openapi:bundle": "redocly bundle openapi/openapi.yaml -o spec.json"
+  },
   "dependencies": {
     "express": "4.22.2",
     "express-openapi-validator": "5.6.2"

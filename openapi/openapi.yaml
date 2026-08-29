@@ -1,0 +1,461 @@
+openapi: 3.0.3
+info:
+  title: Marketplace API
+  version: 1.0.0
+  description: >
+    Contract for browsing marketplace products and placing orders. Monetary
+    values are represented as integer minor units (`*_cents`).
+  license:
+    name: All rights reserved
+    url: https://choosealicense.com/no-permission/
+servers:
+  - url: /
+    description: Current host, including the local HW-09 adapter.
+security: []
+tags:
+  - name: Products
+    description: Marketplace catalog operations.
+  - name: Orders
+    description: Order placement and retrieval operations.
+
+paths:
+  /products:
+    get:
+      tags:
+        - Products
+      operationId: listProducts
+      summary: List products
+      description: Returns one cursor-paginated page of products.
+      parameters:
+        - $ref: '#/components/parameters/PageLimit'
+        - $ref: '#/components/parameters/PageCursor'
+      responses:
+        '200':
+          description: A page of products.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /products/{productId}:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    get:
+      tags:
+        - Products
+      operationId: getProduct
+      summary: Get a product
+      description: Returns a single product from the marketplace catalog.
+      responses:
+        '200':
+          description: The requested product.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+        - Products
+      operationId: updateProduct
+      summary: Update a product
+      description: >
+        Applies the supplied catalog changes. At least one mutable field must
+        be present.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProductRequest'
+      responses:
+        '200':
+          description: The updated product.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /orders:
+    post:
+      tags:
+        - Orders
+      operationId: createOrder
+      summary: Create an order
+      description: >
+        Creates an immutable order snapshot and reserves the requested stock.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: >
+            Order created. Replaying the same key and semantically identical
+            body returns this same status, body, and Location value.
+          headers:
+            Location:
+              description: Relative URI of the created order.
+              schema:
+                type: string
+                example: /orders/order_01J6A3YVK4Q8H7P4KX9M2C5N6R
+            Idempotency-Replay:
+              description: Present with value `true` when this is a replay.
+              schema:
+                type: string
+                enum:
+                  - 'true'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /orders/{orderId}:
+    parameters:
+      - $ref: '#/components/parameters/OrderId'
+    get:
+      tags:
+        - Orders
+      operationId: getOrder
+      summary: Get an order
+      description: Returns an order with its historical item snapshots.
+      responses:
+        '200':
+          description: The requested order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  parameters:
+    PageLimit:
+      name: limit
+      in: query
+      required: false
+      description: Maximum number of products to return.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    PageCursor:
+      name: cursor
+      in: query
+      required: false
+      description: >
+        Opaque pagination token returned as `next_cursor` by the previous
+        page. Clients must not parse, construct, or modify it.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 2048
+    ProductId:
+      name: productId
+      in: path
+      required: true
+      description: Stable product identifier.
+      schema:
+        $ref: '#/components/schemas/ResourceId'
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      description: Stable order identifier.
+      schema:
+        $ref: '#/components/schemas/ResourceId'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: >
+        Client-generated opaque key for safely retrying order creation. The
+        same key with the same request body returns the original 201 response;
+        reusing the key with a different body returns a 422 problem response.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+
+  responses:
+    BadRequest:
+      description: The request does not satisfy the API contract.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: The requested resource does not exist.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Conflict:
+      description: The request conflicts with the current resource state.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    UnprocessableEntity:
+      description: >
+        The request is structurally valid but violates a domain rule, such as
+        insufficient stock or Idempotency-Key reuse with a different body.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+  schemas:
+    ResourceId:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: '^[A-Za-z0-9][A-Za-z0-9_-]*$'
+      example: product_01J6A3YVK4Q8H7P4KX9M2C5N6R
+
+    Product:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - seller_id
+        - name
+        - description
+        - price_cents
+        - stock_qty
+        - status
+        - created_at
+        - updated_at
+      properties:
+        id:
+          $ref: '#/components/schemas/ResourceId'
+        seller_id:
+          $ref: '#/components/schemas/ResourceId'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 5000
+        price_cents:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+          description: Unit price in the smallest currency unit.
+        stock_qty:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        status:
+          type: string
+          enum:
+            - draft
+            - active
+            - archived
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ProductPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - next_cursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Product'
+        next_cursor:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 2048
+          description: Opaque token for the next page; null when no page remains.
+
+    UpdateProductRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 5000
+        price_cents:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        stock_qty:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        status:
+          type: string
+          enum:
+            - draft
+            - active
+            - archived
+
+    CreateOrderRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/CreateOrderItemRequest'
+
+    CreateOrderItemRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - product_id
+        - quantity
+      properties:
+        product_id:
+          $ref: '#/components/schemas/ResourceId'
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 1000
+
+    Order:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - status
+        - currency
+        - items
+        - total_cents
+        - created_at
+      properties:
+        id:
+          $ref: '#/components/schemas/ResourceId'
+        status:
+          type: string
+          enum:
+            - pending
+            - placed
+            - cancelled
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          example: USD
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        total_cents:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+          description: Sum of all item line totals in the smallest currency unit.
+        created_at:
+          type: string
+          format: date-time
+
+    OrderItem:
+      type: object
+      additionalProperties: false
+      required:
+        - product_id
+        - product_name
+        - quantity
+        - unit_price_cents
+        - line_total_cents
+      properties:
+        product_id:
+          $ref: '#/components/schemas/ResourceId'
+        product_name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Product name captured when the order was created.
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 1000
+        unit_price_cents:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+          description: Unit price captured when the order was created.
+        line_total_cents:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+
+    Problem:
+      type: object
+      description: RFC 7807 problem details object.
+      required:
+        - type
+        - title
+        - status
+        - detail
+        - instance
+      properties:
+        type:
+          type: string
+          format: uri
+          description: URI identifying the problem type.
+          example: https://marketplace.example/problems/validation-error
+        title:
+          type: string
+          minLength: 1
+          description: Short, human-readable summary of the problem type.
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+          description: HTTP status code generated for this occurrence.
+        detail:
+          type: string
+          minLength: 1
+          description: Human-readable explanation specific to this occurrence.
+        instance:
+          type: string
+          minLength: 1
+          description: URI reference identifying this specific occurrence.
