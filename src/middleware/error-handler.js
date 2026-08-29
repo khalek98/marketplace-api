@@ -34,9 +34,11 @@ export function errorHandler(error, req, res, _next) {
         : "request-validation-error"
       : "internal-error");
   const detail =
-    typeof error.message === "string" && error.message.length > 0
-      ? error.message
-      : "The request could not be completed.";
+    status >= 500
+      ? "The request could not be completed."
+      : typeof error.message === "string" && error.message.length > 0
+        ? error.message
+        : "The request could not be completed.";
 
   res
     .status(status)
