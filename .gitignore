@@ -1,5 +1,7 @@
 node_modules/
 dist/
+spec.json
+course-materials/
 
 .env
 .DS_Store
