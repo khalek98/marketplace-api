@@ -44,6 +44,9 @@ describe("POST /orders", () => {
 
     assert.equal(res.status, 400);
     assertProblemJson(res);
+    const problem = await res.json();
+    assert.match(problem.detail, /idempotency-key/i);
+    assert.match(problem.detail, /required property/i);
   });
 
   test("returns 400 problem+json when items is empty", async () => {
@@ -54,6 +57,8 @@ describe("POST /orders", () => {
 
     assert.equal(res.status, 400);
     assertProblemJson(res);
+    const problem = await res.json();
+    assert.match(problem.detail, /must NOT have fewer than 1 items/i);
   });
 
   test("returns 201 with Location on valid request", async () => {
@@ -142,6 +147,82 @@ describe("GET /products", () => {
 
   test("returns 404 problem+json when product is not found", async () => {
     const res = await fetch(`${baseUrl}/products/product_does_not_exist`);
+
+    assert.equal(res.status, 404);
+    assertProblemJson(res);
+  });
+});
+
+describe("PATCH /products/{productId}", () => {
+  test("returns 200 with updated fields", async () => {
+    const name = `Updated Webcam ${randomUUID()}`;
+    const res = await fetch(`${baseUrl}/products/product_webcam`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+
+    assert.equal(res.status, 200);
+    const product = await res.json();
+    assert.equal(product.id, "product_webcam");
+    assert.equal(product.name, name);
+    assert.ok(typeof product.updated_at === "string");
+  });
+
+  test("returns 409 problem+json when an archived product catalog field is patched", async () => {
+    const res = await fetch(`${baseUrl}/products/product_archived`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Should not apply" }),
+    });
+
+    assert.equal(res.status, 409);
+    assertProblemJson(res);
+    const problem = await res.json();
+    assert.match(problem.type, /product-archived/);
+  });
+
+  test("returns 422 problem+json when an active product is left with zero stock", async () => {
+    const res = await fetch(`${baseUrl}/products/product_lamp`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stock_qty: 0 }),
+    });
+
+    assert.equal(res.status, 422);
+    assertProblemJson(res);
+    const problem = await res.json();
+    assert.match(problem.type, /product-active-without-stock/);
+  });
+
+  test("returns 404 problem+json when product is not found", async () => {
+    const res = await fetch(`${baseUrl}/products/product_does_not_exist`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Missing product" }),
+    });
+
+    assert.equal(res.status, 404);
+    assertProblemJson(res);
+  });
+});
+
+describe("GET /orders/{orderId}", () => {
+  test("returns 200 with the created order", async () => {
+    const created = await postOrder({
+      key: `get-order-${randomUUID()}`,
+      body: { items: [{ product_id: "product_keyboard", quantity: 1 }] },
+    });
+    assert.equal(created.status, 201);
+    const order = await created.json();
+
+    const res = await fetch(`${baseUrl}/orders/${order.id}`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), order);
+  });
+
+  test("returns 404 problem+json when order is not found", async () => {
+    const res = await fetch(`${baseUrl}/orders/order_does_not_exist`);
 
     assert.equal(res.status, 404);
     assertProblemJson(res);
