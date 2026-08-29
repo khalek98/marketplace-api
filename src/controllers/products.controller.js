@@ -1,6 +1,10 @@
-import { ApplicationError } from '../errors/application-error.js';
-import { decodeCursor, encodeCursor } from '../utils/cursor.js';
-import { products, findProductById, findProductIndexById } from '../store/products.store.js';
+import { ApplicationError } from "../errors/application-error.js";
+import { decodeCursor, encodeCursor } from "../utils/cursor.js";
+import {
+  products,
+  findProductById,
+  findProductIndexById,
+} from "../store/products.store.js";
 
 export function listProducts(req, res, next) {
   try {
@@ -13,9 +17,9 @@ export function listProducts(req, res, next) {
       if (cursorIndex === -1) {
         throw new ApplicationError(
           400,
-          'Invalid cursor',
-          'The cursor does not identify a product in the current catalog.',
-          'invalid-cursor',
+          "Invalid cursor",
+          "The cursor does not identify a product in the current catalog.",
+          "invalid-cursor",
         );
       }
       startIndex = cursorIndex + 1;
@@ -40,9 +44,9 @@ export function getProduct(req, res, next) {
     if (!product) {
       throw new ApplicationError(
         404,
-        'Product not found',
+        "Product not found",
         `Product '${req.params.productId}' does not exist.`,
-        'product-not-found',
+        "product-not-found",
       );
     }
 

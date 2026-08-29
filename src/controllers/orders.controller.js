@@ -1,12 +1,12 @@
-import { ApplicationError } from '../errors/application-error.js';
-import { canonicalize } from '../utils/canonicalize.js';
-import { findProductById } from '../store/products.store.js';
+import { ApplicationError } from "../errors/application-error.js";
+import { canonicalize } from "../utils/canonicalize.js";
+import { findProductById } from "../store/products.store.js";
 import {
   orders,
   idempotencyRecords,
   createOrderId,
   clone,
-} from '../store/orders.store.js';
+} from "../store/orders.store.js";
 
 export function getOrder(req, res, next) {
   try {
@@ -14,9 +14,9 @@ export function getOrder(req, res, next) {
     if (!order) {
       throw new ApplicationError(
         404,
-        'Order not found',
+        "Order not found",
         `Order '${req.params.orderId}' does not exist.`,
-        'order-not-found',
+        "order-not-found",
       );
     }
 
@@ -28,7 +28,7 @@ export function getOrder(req, res, next) {
 
 export function createOrder(req, res, next) {
   try {
-    const idempotencyKey = req.get('Idempotency-Key');
+    const idempotencyKey = req.get("Idempotency-Key");
     const fingerprint = canonicalize(req.body);
     const previous = idempotencyRecords.get(idempotencyKey);
 
@@ -36,16 +36,16 @@ export function createOrder(req, res, next) {
       if (previous.fingerprint !== fingerprint) {
         throw new ApplicationError(
           422,
-          'Idempotency key conflict',
-          'This Idempotency-Key was already used with a different request body.',
-          'idempotency-key-conflict',
+          "Idempotency key conflict",
+          "This Idempotency-Key was already used with a different request body.",
+          "idempotency-key-conflict",
         );
       }
 
       return res
         .status(previous.status)
         .location(previous.location)
-        .set('Idempotency-Replay', 'true')
+        .set("Idempotency-Replay", "true")
         .json(clone(previous.body));
     }
 
@@ -59,20 +59,20 @@ export function createOrder(req, res, next) {
 
     for (const [productId, quantity] of requestedByProduct) {
       const product = findProductById(productId);
-      if (!product || product.status !== 'active') {
+      if (!product || product.status !== "active") {
         throw new ApplicationError(
           422,
-          'Product unavailable',
+          "Product unavailable",
           `Product '${productId}' is not available for ordering.`,
-          'product-unavailable',
+          "product-unavailable",
         );
       }
       if (product.stock_qty < quantity) {
         throw new ApplicationError(
           422,
-          'Insufficient stock',
+          "Insufficient stock",
           `Product '${productId}' has insufficient stock.`,
-          'insufficient-stock',
+          "insufficient-stock",
         );
       }
     }
@@ -97,9 +97,9 @@ export function createOrder(req, res, next) {
     if (!Number.isSafeInteger(totalCents)) {
       throw new ApplicationError(
         422,
-        'Order total is too large',
-        'The order total exceeds the supported monetary range.',
-        'order-total-too-large',
+        "Order total is too large",
+        "The order total exceeds the supported monetary range.",
+        "order-total-too-large",
       );
     }
 
@@ -111,8 +111,8 @@ export function createOrder(req, res, next) {
 
     const order = {
       id: createOrderId(),
-      status: 'placed',
-      currency: 'USD',
+      status: "placed",
+      currency: "USD",
       items: orderItems,
       total_cents: totalCents,
       created_at: new Date().toISOString(),

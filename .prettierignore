@@ -1,0 +1,7 @@
+node_modules
+package-lock.json
+course-materials
+spec.json
+_readme_full.md
+_app_full.js
+.git

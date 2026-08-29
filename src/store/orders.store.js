@@ -1,13 +1,13 @@
-const initialTimestamp = '2026-08-28T12:00:00.000Z';
+const initialTimestamp = "2026-08-28T12:00:00.000Z";
 
 const seedOrder = {
-  id: 'order_demo',
-  status: 'placed',
-  currency: 'USD',
+  id: "order_demo",
+  status: "placed",
+  currency: "USD",
   items: [
     {
-      product_id: 'product_mouse',
-      product_name: 'Wireless Mouse',
+      product_id: "product_mouse",
+      product_name: "Wireless Mouse",
       quantity: 1,
       unit_price_cents: 6900,
       line_total_cents: 6900,

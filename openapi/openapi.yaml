@@ -27,21 +27,21 @@ paths:
       summary: List products
       description: Returns one cursor-paginated page of products.
       parameters:
-        - $ref: '#/components/parameters/PageLimit'
-        - $ref: '#/components/parameters/PageCursor'
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageCursor"
       responses:
-        '200':
+        "200":
           description: A page of products.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProductPage'
-        '400':
-          $ref: '#/components/responses/BadRequest'
+                $ref: "#/components/schemas/ProductPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
 
   /products/{productId}:
     parameters:
-      - $ref: '#/components/parameters/ProductId'
+      - $ref: "#/components/parameters/ProductId"
     get:
       tags:
         - Products
@@ -49,16 +49,16 @@ paths:
       summary: Get a product
       description: Returns a single product from the marketplace catalog.
       responses:
-        '200':
+        "200":
           description: The requested product.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Product'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '404':
-          $ref: '#/components/responses/NotFound'
+                $ref: "#/components/schemas/Product"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
     patch:
       tags:
         - Products
@@ -72,22 +72,22 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateProductRequest'
+              $ref: "#/components/schemas/UpdateProductRequest"
       responses:
-        '200':
+        "200":
           description: The updated product.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Product'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '422':
-          $ref: '#/components/responses/UnprocessableEntity'
+                $ref: "#/components/schemas/Product"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
 
   /orders:
     post:
@@ -98,15 +98,15 @@ paths:
       description: >
         Creates an immutable order snapshot and reserves the requested stock.
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateOrderRequest'
+              $ref: "#/components/schemas/CreateOrderRequest"
       responses:
-        '201':
+        "201":
           description: >
             Order created. Replaying the same key and semantically identical
             body returns this same status, body, and Location value.
@@ -121,21 +121,21 @@ paths:
               schema:
                 type: string
                 enum:
-                  - 'true'
+                  - "true"
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Order'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '422':
-          $ref: '#/components/responses/UnprocessableEntity'
+                $ref: "#/components/schemas/Order"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
 
   /orders/{orderId}:
     parameters:
-      - $ref: '#/components/parameters/OrderId'
+      - $ref: "#/components/parameters/OrderId"
     get:
       tags:
         - Orders
@@ -143,16 +143,16 @@ paths:
       summary: Get an order
       description: Returns an order with its historical item snapshots.
       responses:
-        '200':
+        "200":
           description: The requested order.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Order'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '404':
-          $ref: '#/components/responses/NotFound'
+                $ref: "#/components/schemas/Order"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
 components:
   parameters:
@@ -183,14 +183,14 @@ components:
       required: true
       description: Stable product identifier.
       schema:
-        $ref: '#/components/schemas/ResourceId'
+        $ref: "#/components/schemas/ResourceId"
     OrderId:
       name: orderId
       in: path
       required: true
       description: Stable order identifier.
       schema:
-        $ref: '#/components/schemas/ResourceId'
+        $ref: "#/components/schemas/ResourceId"
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -210,19 +210,19 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: '#/components/schemas/Problem'
+            $ref: "#/components/schemas/Problem"
     NotFound:
       description: The requested resource does not exist.
       content:
         application/problem+json:
           schema:
-            $ref: '#/components/schemas/Problem'
+            $ref: "#/components/schemas/Problem"
     Conflict:
       description: The request conflicts with the current resource state.
       content:
         application/problem+json:
           schema:
-            $ref: '#/components/schemas/Problem'
+            $ref: "#/components/schemas/Problem"
     UnprocessableEntity:
       description: >
         The request is structurally valid but violates a domain rule, such as
@@ -230,14 +230,14 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: '#/components/schemas/Problem'
+            $ref: "#/components/schemas/Problem"
 
   schemas:
     ResourceId:
       type: string
       minLength: 1
       maxLength: 128
-      pattern: '^[A-Za-z0-9][A-Za-z0-9_-]*$'
+      pattern: "^[A-Za-z0-9][A-Za-z0-9_-]*$"
       example: product_01J6A3YVK4Q8H7P4KX9M2C5N6R
 
     Product:
@@ -255,9 +255,9 @@ components:
         - updated_at
       properties:
         id:
-          $ref: '#/components/schemas/ResourceId'
+          $ref: "#/components/schemas/ResourceId"
         seller_id:
-          $ref: '#/components/schemas/ResourceId'
+          $ref: "#/components/schemas/ResourceId"
         name:
           type: string
           minLength: 1
@@ -297,7 +297,7 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/Product'
+            $ref: "#/components/schemas/Product"
         next_cursor:
           type: string
           nullable: true
@@ -343,7 +343,7 @@ components:
           minItems: 1
           maxItems: 100
           items:
-            $ref: '#/components/schemas/CreateOrderItemRequest'
+            $ref: "#/components/schemas/CreateOrderItemRequest"
 
     CreateOrderItemRequest:
       type: object
@@ -353,7 +353,7 @@ components:
         - quantity
       properties:
         product_id:
-          $ref: '#/components/schemas/ResourceId'
+          $ref: "#/components/schemas/ResourceId"
         quantity:
           type: integer
           minimum: 1
@@ -371,7 +371,7 @@ components:
         - created_at
       properties:
         id:
-          $ref: '#/components/schemas/ResourceId'
+          $ref: "#/components/schemas/ResourceId"
         status:
           type: string
           enum:
@@ -380,13 +380,13 @@ components:
             - cancelled
         currency:
           type: string
-          pattern: '^[A-Z]{3}$'
+          pattern: "^[A-Z]{3}$"
           example: USD
         items:
           type: array
           minItems: 1
           items:
-            $ref: '#/components/schemas/OrderItem'
+            $ref: "#/components/schemas/OrderItem"
         total_cents:
           type: integer
           minimum: 0
@@ -407,7 +407,7 @@ components:
         - line_total_cents
       properties:
         product_id:
-          $ref: '#/components/schemas/ResourceId'
+          $ref: "#/components/schemas/ResourceId"
         product_name:
           type: string
           minLength: 1

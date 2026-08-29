@@ -8,13 +8,16 @@
     "start": "node src/app.js",
     "openapi:lint": "redocly lint openapi/openapi.yaml",
     "openapi:bundle": "redocly bundle openapi/openapi.yaml -o spec.json",
-    "test": "node --test test/**/*.test.js"
+    "test": "node --test test/**/*.test.js",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
     "express": "4.22.2",
     "express-openapi-validator": "5.6.2"
   },
   "devDependencies": {
-    "@redocly/cli": "2.46.0"
+    "@redocly/cli": "2.46.0",
+    "prettier": "3.9.6"
   }
 }
