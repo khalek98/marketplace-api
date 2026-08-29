@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path';
 
 import { notFoundHandler, errorHandler } from './middleware/error-handler.js';
 import { productsRouter } from './routes/products.router.js';
+import { ordersRouter } from './routes/orders.router.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const apiSpec = resolve(__dirname, '../openapi/openapi.yaml');
@@ -22,6 +23,7 @@ app.use(
 );
 
 app.use('/products', productsRouter);
+app.use('/orders', ordersRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
