@@ -5,6 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "start": "node src/app.js",
     "openapi:lint": "redocly lint openapi/openapi.yaml",
     "openapi:bundle": "redocly bundle openapi/openapi.yaml -o spec.json"
   },
