@@ -3,6 +3,8 @@ import OpenApiValidator from 'express-openapi-validator';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
+import { notFoundHandler, errorHandler } from './middleware/error-handler.js';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const apiSpec = resolve(__dirname, '../openapi/openapi.yaml');
 
@@ -17,6 +19,9 @@ app.use(
     validateResponses: true,
   }),
 );
+
+app.use(notFoundHandler);
+app.use(errorHandler);
 
 const isMainModule =
   process.argv[1] !== undefined &&
