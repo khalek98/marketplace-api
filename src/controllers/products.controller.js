@@ -55,3 +55,67 @@ export function getProduct(req, res, next) {
     next(error);
   }
 }
+
+const PATCHABLE_FIELDS = [
+  "name",
+  "description",
+  "price_cents",
+  "stock_qty",
+  "status",
+];
+const CATALOG_FIELDS = ["name", "description", "price_cents", "stock_qty"];
+
+export function updateProduct(req, res, next) {
+  try {
+    const product = findProductById(req.params.productId);
+    if (!product) {
+      throw new ApplicationError(
+        404,
+        "Product not found",
+        `Product '${req.params.productId}' does not exist.`,
+        "product-not-found",
+      );
+    }
+
+    const patch = req.body;
+    const touchesCatalog = CATALOG_FIELDS.some(
+      (field) => patch[field] !== undefined,
+    );
+
+    if (product.status === "archived" && touchesCatalog) {
+      throw new ApplicationError(
+        409,
+        "Product is archived",
+        "Archived products cannot be edited until they are unarchived.",
+        "product-archived",
+      );
+    }
+
+    const nextProduct = { ...product };
+    for (const field of PATCHABLE_FIELDS) {
+      if (patch[field] !== undefined) {
+        nextProduct[field] = patch[field];
+      }
+    }
+
+    if (nextProduct.status === "active" && nextProduct.stock_qty === 0) {
+      throw new ApplicationError(
+        422,
+        "Product cannot be active without stock",
+        "A product cannot be activated or kept active with zero stock.",
+        "product-active-without-stock",
+      );
+    }
+
+    for (const field of PATCHABLE_FIELDS) {
+      if (patch[field] !== undefined) {
+        product[field] = patch[field];
+      }
+    }
+    product.updated_at = new Date().toISOString();
+
+    res.json(product);
+  } catch (error) {
+    next(error);
+  }
+}

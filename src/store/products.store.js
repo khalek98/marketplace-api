@@ -45,6 +45,28 @@ export const products = [
     created_at: initialTimestamp,
     updated_at: initialTimestamp,
   },
+  {
+    id: "product_archived",
+    seller_id: "seller_aurora",
+    name: "USB Cable",
+    description: "Archived USB-C cable listing.",
+    price_cents: 900,
+    stock_qty: 3,
+    status: "archived",
+    created_at: initialTimestamp,
+    updated_at: initialTimestamp,
+  },
+  {
+    id: "product_lamp",
+    seller_id: "seller_northstar",
+    name: "Desk Lamp",
+    description: "Adjustable LED desk lamp.",
+    price_cents: 2400,
+    stock_qty: 4,
+    status: "active",
+    created_at: initialTimestamp,
+    updated_at: initialTimestamp,
+  },
 ];
 
 export function findProductById(id) {
