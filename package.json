@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/app.js",
     "openapi:lint": "redocly lint openapi/openapi.yaml",
-    "openapi:bundle": "redocly bundle openapi/openapi.yaml -o spec.json"
+    "openapi:bundle": "redocly bundle openapi/openapi.yaml -o spec.json",
+    "test": "node --test test/**/*.test.js"
   },
   "dependencies": {
     "express": "4.22.2",
