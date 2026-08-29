@@ -76,6 +76,72 @@ User stories:
 
 Обрано **варіант Б — runtime-валідація на кордоні**. OpenAPI — джерело правди; мінімальний Express 4 adapter перевіряє запити й відповіді. Згодом цю межу збереже NestJS.
 
+### Запуск і перевірка
+
+Потрібен Node.js 20 або новіший. Встановіть зафіксовані залежності та запустіть adapter:
+
+```bash
+npm install
+npm start
+```
+
+За замовчуванням API доступний на `http://localhost:3000`; порт можна змінити через `PORT`. В іншому терміналі перевірте OpenAPI-контракт. Bundle `spec.json` є generated artifact і не комітиться:
+
+```bash
+npm run openapi:lint
+npm run openapi:bundle
+
+node -e "const s=require('./spec.json'),M=['get','post','put','patch','delete'];\
+ const ops=Object.entries(s.paths).flatMap(([p,v])=>Object.keys(v).filter(m=>M.includes(m)).map(m=>[p,m]));\
+ const idem=ops.flatMap(([p,m])=>s.paths[p][m].parameters??[]).find(x=>x.in==='header'&&/idempotency-key/i.test(x.name));\
+ console.log('операцій:',ops.length,'· ресурсів:',new Set(Object.keys(s.paths).map(p=>p.split('/')[1])).size);\
+ console.log('Idempotency-Key: required =',idem?.required,'· опис, символів =',(idem?.description??'').trim().length)"
+```
+
+Автоматичні contract-тести (`test/**/*.test.js`, без окремого процесу — app слухає на випадковому порту):
+
+```bash
+npm test
+```
+
+Форматування коду — Prettier через `npm run format`.
+
+HTTP-перевірки варіанта Б (curl):
+
+```bash
+# Спека вимагає Idempotency-Key: очікується 400 problem+json.
+curl -i -X POST http://localhost:3000/orders \
+  -H 'Content-Type: application/json' \
+  -d '{"items":[{"product_id":"product_keyboard","quantity":1}]}'
+
+# Порожній items відхиляється request validator: очікується 400 problem+json.
+curl -i -X POST http://localhost:3000/orders \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: empty-items-demo' \
+  -d '{"items":[]}'
+
+# Перша спроба створює замовлення: очікується 201 та Location.
+curl -i -X POST http://localhost:3000/orders \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: checkout-demo-1' \
+  -d '{"items":[{"product_id":"product_keyboard","quantity":1}]}'
+
+# Той самий ключ і тіло повертають те саме замовлення:
+# очікується 201 та Idempotency-Replay: true.
+curl -i -X POST http://localhost:3000/orders \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: checkout-demo-1' \
+  -d '{"items":[{"product_id":"product_keyboard","quantity":1}]}'
+
+# Той самий ключ з іншим тілом: очікується 422 problem+json.
+curl -i -X POST http://localhost:3000/orders \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: checkout-demo-1' \
+  -d '{"items":[{"product_id":"product_mouse","quantity":1}]}'
+```
+
+Дані, залишки та idempotency records поки зберігаються лише в памʼяті процесу й очищаються після перезапуску. У наступних ДЗ доменні дані перейдуть у PostgreSQL, а idempotency storage — у Redis із TTL.
+
 ## Журнал рішень
 
 - **2026-08-29:** обрано домен Marketplace API для простоти навчання; ціль курсу — production-шлях і Postgres після MongoDB.
