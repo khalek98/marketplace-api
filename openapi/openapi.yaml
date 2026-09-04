@@ -38,6 +38,8 @@ paths:
                 $ref: "#/components/schemas/ProductPage"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
   /products/{productId}:
     parameters:
@@ -59,6 +61,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
     patch:
       tags:
         - Products
@@ -88,6 +92,8 @@ paths:
           $ref: "#/components/responses/Conflict"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
   /orders:
     post:
@@ -142,6 +148,8 @@ paths:
           $ref: "#/components/responses/Conflict"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
   /orders/{orderId}:
     parameters:
@@ -163,6 +171,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
 components:
   parameters:
@@ -224,6 +234,14 @@ components:
       description: >
         The request is structurally valid but violates a domain rule, such as
         insufficient stock or Idempotency-Key reuse with a different body.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    InternalServerError:
+      description: >
+        The server failed to complete the request, including response
+        contract drift detected by the OpenAPI boundary.
       content:
         application/problem+json:
           schema:
