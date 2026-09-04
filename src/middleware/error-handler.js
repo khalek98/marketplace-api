@@ -40,6 +40,15 @@ export function errorHandler(error, req, res, _next) {
         ? error.message
         : "The request could not be completed.";
 
+  if (status >= 500) {
+    console.error("[5xx]", {
+      status,
+      message: error.message,
+      errors: error.errors,
+      path: req.originalUrl || req.url || "/",
+    });
+  }
+
   res
     .status(status)
     .type("application/problem+json")
