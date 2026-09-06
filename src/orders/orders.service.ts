@@ -16,14 +16,6 @@ export class OrdersService {
   }
 
   create(body: CreateOrderRequest, idempotencyKey: string): { order: Order; location: string; replay: boolean } {
-    if (!idempotencyKey) {
-      throw new ApplicationError(
-        422,
-        "Idempotency key is required",
-        "An Idempotency-Key is required to create an order.",
-        "idempotency-key-required",
-      );
-    }
     const fingerprint = canonicalize(body);
     const previous = idempotencyRecords.get(idempotencyKey);
 
