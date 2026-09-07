@@ -71,6 +71,7 @@ User stories:
 - Auth / RBAC на ресурсах (seller — лише свої товари).
 - Redis cache-aside для каталогу + idempotency storage з TTL.
 - Outbox worker + черга для `order.placed`.
+- **Infisical** (доробка HW-11 перед HW-12): секрети в Infisical, локальний старт через `infisical run -- npm start`, без секретів у `.env`.
 
 ## Configuration
 
@@ -137,4 +138,5 @@ printf 'app-v1-password' > secrets/db_password
 - **2026-08-29:** для ДЗ №9 — варіант Б (runtime-валідація) і contract-тести; валюта в контракті лишається `USD`.
 - **2026-08-29:** у план закладено guest/admin, UAH/USD/EUR з зовнішнім курсом, платежі через LiqPay (sandbox + webhook); зараз — mock payment contract.
 - **2026-09-07 (HW-11):** fail-fast env (zod + ConfigModule), `.env.example`/`check:env`, секрети поза git/образом, ротація `secrets/db_password` без рестарту (`rotate.sh` + `pg.Pool` password function).
+- **2026-09-07:** Infisical свідомо не в PR HW-11 (встигнути здати HW-11); доробити після здачі, до старту HW-12.
 - Наступні зміни архітектури додаються сюди з причиною та наслідками, а не приховуються переписуванням історії.
