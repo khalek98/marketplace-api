@@ -2,7 +2,10 @@ import { z } from "zod";
 
 export const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535),
+  // Host/port/db/user for pg.Pool. Password is NOT taken from this URL —
+  // it is read from DB_PASSWORD_FILE on every new connection (rotation).
   DB_URL: z.url({ protocol: /^postgres$/ }),
+  DB_PASSWORD_FILE: z.string().min(1).default("secrets/db_password"),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
   CURSOR_HMAC_SECRET: z.string().min(1).default("dev-cursor-hmac-secret"),

@@ -13,13 +13,14 @@ export async function createApp(): Promise<INestApplication> {
 
   const expressApp = app.getHttpAdapter().getInstance();
   expressApp.disable("x-powered-by");
-  // Body must be parsed BEFORE openapi-validator (same order as legacy Express).
   expressApp.use(json());
   expressApp.use(
     OpenApiValidator.middleware({
       apiSpec: resolve(process.cwd(), "openapi/openapi.yaml"),
       validateRequests: true,
       validateResponses: true,
+      // Operational endpoints (uptime + DB probe for rotation) are outside the marketplace contract.
+      ignorePaths: /^\/(health|db)$/,
     }),
   );
 
