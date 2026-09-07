@@ -1,14 +1,9 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+
 import { ApplicationError } from "../common/errors/application-error";
 
-const DEFAULT_CURSOR_HMAC_SECRET = "dev-cursor-hmac-secret";
-
-function getCursorSecret() {
-  return process.env.CURSOR_HMAC_SECRET || DEFAULT_CURSOR_HMAC_SECRET;
-}
-
-function signPayload(payloadB64: string) {
-  return createHmac("sha256", getCursorSecret()).update(payloadB64).digest("base64url");
+function signPayload(payloadB64: string, cursorHmacSecret: string) {
+  return createHmac("sha256", cursorHmacSecret).update(payloadB64).digest("base64url");
 }
 
 function safeEqual(a: string, b: string) {
@@ -20,13 +15,13 @@ function safeEqual(a: string, b: string) {
   return timingSafeEqual(aBuf, bBuf);
 }
 
-export function encodeCursor(productId: string) {
+export function encodeCursor(productId: string, cursorHmacSecret: string) {
   const payloadB64 = Buffer.from(JSON.stringify({ version: 1, after: productId }), "utf8").toString("base64url");
-  const signature = signPayload(payloadB64);
+  const signature = signPayload(payloadB64, cursorHmacSecret);
   return `${payloadB64}.${signature}`;
 }
 
-export function decodeCursor(cursor: string) {
+export function decodeCursor(cursor: string, cursorHmacSecret: string) {
   try {
     if (typeof cursor !== "string" || !cursor.includes(".")) {
       throw new Error("Cursor is missing signature.");
@@ -43,7 +38,7 @@ export function decodeCursor(cursor: string) {
       throw new Error("Cursor format is invalid.");
     }
 
-    const expected = signPayload(payloadB64);
+    const expected = signPayload(payloadB64, cursorHmacSecret);
     if (!safeEqual(signature, expected)) {
       throw new Error("Cursor signature mismatch.");
     }

@@ -1,19 +1,24 @@
 import { Injectable } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+
 import { findProductById, findProductIndexById, products } from "./products.store";
+import { Product, ProductPatch } from "./products.types";
 import { ApplicationError } from "../common/errors/application-error";
 import { decodeCursor, encodeCursor } from "../utils/cursor";
-import { Product, ProductPatch } from "./products.types";
+import { Env } from "../config/env.schema";
 
 const PATCHABLE_FIELDS = ["name", "description", "price_cents", "stock_qty", "status"] as const;
 const CATALOG_FIELDS = ["name", "description", "price_cents", "stock_qty"];
 
 @Injectable()
 export class ProductsService {
+  constructor(private readonly config: ConfigService<Env, true>) {}
+
   list(limit: number, cursor?: string): { items: Product[]; next_cursor: string | null } {
     let startIndex = 0;
 
     if (cursor !== undefined) {
-      const after = decodeCursor(cursor);
+      const after = decodeCursor(cursor, this.config.get("CURSOR_HMAC_SECRET", { infer: true }));
       const cursorIndex = findProductIndexById(after);
       if (cursorIndex === -1) {
         throw new ApplicationError(
@@ -28,7 +33,10 @@ export class ProductsService {
 
     const items = products.slice(startIndex, startIndex + limit);
     const hasNextPage = startIndex + items.length < products.length;
-    const nextCursor = hasNextPage && items.length > 0 ? encodeCursor(items[items.length - 1].id) : null;
+    const nextCursor =
+      hasNextPage && items.length > 0
+        ? encodeCursor(items[items.length - 1].id, this.config.get("CURSOR_HMAC_SECRET", { infer: true }))
+        : null;
 
     return { items, next_cursor: nextCursor };
   }
