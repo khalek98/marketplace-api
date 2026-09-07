@@ -2,7 +2,7 @@
 
 Я вже працюю full-stack і збираю продукти в проді, але в цьому курсі хочу пройти саме production-шлях: NestJS, PostgreSQL, Redis, Docker, Kubernetes, CI/CD і секрети. Головна технічна мотивація — навчитися SQL і транзакцій на Postgres після досвіду з MongoDB, і зібрати стабільний сервіс, який витримує навантаження на сучасних інструментах курсу.
 
-README — жива архітектурна записка курсового. Контракт і код зростатимуть у наступних ДЗ; HW-09 фіксує OpenAPI і тонкий runtime-adapter.
+README — жива архітектурна записка курсового. Контракт OpenAPI з HW-09 лишається джерелом правди; рантайм зараз — NestJS (див. журнал рішень).
 
 ## Що це за сервіс
 
@@ -72,75 +72,63 @@ User stories:
 - Redis cache-aside для каталогу + idempotency storage з TTL.
 - Outbox worker + черга для `order.placed`.
 
-## ДЗ №9: контракт
+## Configuration
 
-Обрано **варіант Б — runtime-валідація на кордоні**. OpenAPI — джерело правди; мінімальний Express 4 adapter перевіряє запити й відповіді. Згодом цю межу збереже NestJS.
+Конфіг проходить fail-fast через zod (`src/config/env.schema.ts`) і `ConfigModule.validate`. Секрети БД — у файлі, не в env (щоб ротувати пароль без рестарту процесу).
 
-### Запуск і перевірка
+### Змінні середовища
 
-Потрібен Node.js 20 або новіший. Встановіть зафіксовані залежності та запустіть adapter:
+Повний контракт — `.env.example` (звірка: `npm run check:env`). Реальний `.env` у `.gitignore`.
+
+| Змінна               | Обовʼязкова                       | Опис                                                                                      |
+| -------------------- | --------------------------------- | ----------------------------------------------------------------------------------------- |
+| `PORT`               | так                               | HTTP-порт API                                                                             |
+| `DB_URL`             | так                               | `postgres://…` для host/port/db/**user**. Пароль з URL **ігнорується** — береться з файлу |
+| `DB_PASSWORD_FILE`   | ні (дефолт `secrets/db_password`) | Шлях до файлу з паролем Postgres                                                          |
+| `LOG_LEVEL`          | ні (`info`)                       | `debug` \| `info` \| `warn` \| `error`                                                    |
+| `TIMEOUT_MS`         | ні (`5000`)                       | Таймаут зовнішніх викликів, мс                                                            |
+| `CURSOR_HMAC_SECRET` | ні (dev-дефолт)                   | HMAC для cursor пагінації                                                                 |
+
+Пароль БД: локальний файл `secrets/db_password` (теж у `.gitignore`). Стартове значення має збігатися з `init.sql` (`app-v1-password`).
+
+### Запуск
+
+Потрібен Node.js ≥ 22.
 
 ```bash
+cp .env.example .env
+mkdir -p secrets
+printf 'app-v1-password' > secrets/db_password
+
+docker compose up -d --wait
 npm install
 npm start
 ```
 
-За замовчуванням API доступний на `http://localhost:3000`; порт можна змінити через `PORT`. В іншому терміналі перевірте OpenAPI-контракт. Bundle `spec.json` є generated artifact і не комітиться:
+API слухає на порту з `PORT` у `.env` (у `.env.example` — `3000`). Без `PORT` процес не стартує (fail-fast).
+
+- `GET /health` — uptime процесу (без рестарту росте)
+- `GET /db` — пробний запит у Postgres через пул
+
+Перевірка синхронності `.env.example` зі схемою: `npm run check:env`.
+
+### Ротація пароля БД без рестарту
+
+Порядок у `rotate.sh`: `ALTER ROLE` → оновити файл → `pg_terminate_backend`. Пул читає пароль з файлу на **кожне нове** зʼєднання (`password: async () => readFile(...)`).
+
+1. Запусти Postgres і API (див. вище).
+2. Запамʼятай uptime: `curl -s http://localhost:3000/health`
+3. У іншому терміналі: `bash rotate.sh`
+4. Перевір БД: `curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/db` → `200`
+5. Знову `curl -s http://localhost:3000/health` — `uptimeSec` **більший**, ніж у кроці 2 (процес не перезапускався)
+
+Після `docker compose down -v` Postgres знову бере пароль з `init.sql`, а файл може лишитись ротованим. Поверни файл:
 
 ```bash
-npm run openapi:lint
-npm run openapi:bundle
-
-node -e "const s=require('./spec.json'),M=['get','post','put','patch','delete'];\
- const ops=Object.entries(s.paths).flatMap(([p,v])=>Object.keys(v).filter(m=>M.includes(m)).map(m=>[p,m]));\
- const idem=ops.flatMap(([p,m])=>s.paths[p][m].parameters??[]).find(x=>x.in==='header'&&/idempotency-key/i.test(x.name));\
- console.log('операцій:',ops.length,'· ресурсів:',new Set(Object.keys(s.paths).map(p=>p.split('/')[1])).size);\
- console.log('Idempotency-Key: required =',idem?.required,'· опис, символів =',(idem?.description??'').trim().length)"
+printf 'app-v1-password' > secrets/db_password
 ```
 
-Автоматичні contract-тести (`test/**/*.test.js`, без окремого процесу — app слухає на випадковому порту):
-
-```bash
-npm test
-```
-
-Форматування коду — Prettier через `npm run format`.
-
-HTTP-перевірки варіанта Б (curl):
-
-```bash
-# Спека вимагає Idempotency-Key: очікується 400 problem+json.
-curl -i -X POST http://localhost:3000/orders \
-  -H 'Content-Type: application/json' \
-  -d '{"items":[{"product_id":"product_keyboard","quantity":1}]}'
-
-# Порожній items відхиляється request validator: очікується 400 problem+json.
-curl -i -X POST http://localhost:3000/orders \
-  -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: empty-items-demo' \
-  -d '{"items":[]}'
-
-# Перша спроба створює замовлення: очікується 201 та Location.
-curl -i -X POST http://localhost:3000/orders \
-  -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: checkout-demo-1' \
-  -d '{"items":[{"product_id":"product_keyboard","quantity":1}]}'
-
-# Той самий ключ і тіло повертають те саме замовлення:
-# очікується 201 та Idempotency-Replay: true.
-curl -i -X POST http://localhost:3000/orders \
-  -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: checkout-demo-1' \
-  -d '{"items":[{"product_id":"product_keyboard","quantity":1}]}'
-
-# Той самий ключ з іншим тілом: очікується 422 problem+json.
-curl -i -X POST http://localhost:3000/orders \
-  -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: checkout-demo-1' \
-  -d '{"items":[{"product_id":"product_mouse","quantity":1}]}'
-```
-
-Дані, залишки та idempotency records поки зберігаються лише в памʼяті процесу й очищаються після перезапуску. У наступних ДЗ доменні дані перейдуть у PostgreSQL, а idempotency storage — у Redis із TTL.
+Перевірки якості: `npm test`, `npm run openapi:lint`, `npm run check:env`. Доменний каталог і замовлення поки in-memory (Postgres у HW-11 — для пулу й ротації; дані домену — з L12).
 
 ## Журнал рішень
 
@@ -148,4 +136,5 @@ curl -i -X POST http://localhost:3000/orders \
 - **2026-08-29:** архітектура — NestJS modular monolith + PostgreSQL + Redis + outbox + S3 + Infisical + Docker/K8s; Express у HW-09 лише як contract adapter.
 - **2026-08-29:** для ДЗ №9 — варіант Б (runtime-валідація) і contract-тести; валюта в контракті лишається `USD`.
 - **2026-08-29:** у план закладено guest/admin, UAH/USD/EUR з зовнішнім курсом, платежі через LiqPay (sandbox + webhook); зараз — mock payment contract.
+- **2026-09-07 (HW-11):** fail-fast env (zod + ConfigModule), `.env.example`/`check:env`, секрети поза git/образом, ротація `secrets/db_password` без рестарту (`rotate.sh` + `pg.Pool` password function).
 - Наступні зміни архітектури додаються сюди з причиною та наслідками, а не приховуються переписуванням історії.
