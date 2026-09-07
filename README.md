@@ -44,7 +44,7 @@ User stories:
 
 ## Архітектурні рішення
 
-- **NestJS modular monolith** — хочу вивчити фреймворк курсу на одному deployable сервісі з модулями каталогу, замовлень, користувачів і подій. Express 4 у HW-09 — лише тонкий contract adapter (`src/app.js`), не фінальний стек.
+- **NestJS modular monolith** — хочу вивчити фреймворк курсу на одному deployable сервісі з модулями каталогу, замовлень, користувачів і подій. Express 4 був лише contract adapter у HW-09; зараз рантайм — Nest (див. журнал).
 - **PostgreSQL** — перша серйозна SQL-база після MongoDB; checkout + декремент stock потребують ACID-транзакції.
 - **Redis** — cache каталогу і idempotency keys з TTL; не source of truth.
 - **Outbox** — `order.placed` пишеться разом із замовленням; worker публікує в чергу, споживачі ідемпотентні.
