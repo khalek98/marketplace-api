@@ -8,7 +8,7 @@ export const envSchema = z.object({
   DB_PASSWORD_FILE: z.string().min(1).default("secrets/db_password"),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
-  CURSOR_HMAC_SECRET: z.string().min(1).default("dev-cursor-hmac-secret"),
+  CURSOR_HMAC_SECRET: z.string().min(1),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -49,7 +49,7 @@ User stories:
 - **Redis** — cache каталогу і idempotency keys з TTL; не source of truth.
 - **Outbox** — `order.placed` пишеться разом із замовленням; worker публікує в чергу, споживачі ідемпотентні.
 - **S3** — зображення через presigned URL; у БД лише метадані.
-- **Infisical** — секрети за курсом, без `.env` у git і з fail-fast валідацією конфігу.
+- **Секрети через `process.env` + zod** — Nest не знає про Infisical/Vault; хто завгодно може подати змінні (`.env`, Infisical, cloud SM, K8s). Пароль Postgres — окремо у файлі (ротація без рестарту).
 - **Docker + Kubernetes** — локальна розробка в контейнерах; цільовий deploy — окремі процеси API й outbox worker у K8s.
 
 ## Trade-offs
@@ -71,11 +71,12 @@ User stories:
 - Auth / RBAC на ресурсах (seller — лише свої товари).
 - Redis cache-aside для каталогу + idempotency storage з TTL.
 - Outbox worker + черга для `order.placed`.
-- **Infisical** (доробка HW-11 перед HW-12): секрети в Infisical, локальний старт через `infisical run -- npm start`, без секретів у `.env`.
 
 ## Configuration
 
-Конфіг проходить fail-fast через zod (`src/config/env.schema.ts`) і `ConfigModule.validate`. Секрети БД — у файлі, не в env (щоб ротувати пароль без рестарту процесу).
+Конфіг проходить fail-fast через zod (`src/config/env.schema.ts`) і `ConfigModule.validate`. Nest читає лише `process.env` — йому байдуже, хто підставив значення (`.env`, Infisical, інший secret manager).
+
+Пароль Postgres — **не** з env для пулу: файл `secrets/db_password` + `password: () => readFile(...)`, щоб ротувати без рестарту процесу (AC HW-11).
 
 ### Змінні середовища
 
@@ -85,14 +86,14 @@ User stories:
 | -------------------- | --------------------------------- | ----------------------------------------------------------------------------------------- |
 | `PORT`               | так                               | HTTP-порт API                                                                             |
 | `DB_URL`             | так                               | `postgres://…` для host/port/db/**user**. Пароль з URL **ігнорується** — береться з файлу |
+| `CURSOR_HMAC_SECRET` | так                               | HMAC для cursor пагінації (без дефолту в схемі — має прийти ззовні)                       |
 | `DB_PASSWORD_FILE`   | ні (дефолт `secrets/db_password`) | Шлях до файлу з паролем Postgres                                                          |
 | `LOG_LEVEL`          | ні (`info`)                       | `debug` \| `info` \| `warn` \| `error`                                                    |
 | `TIMEOUT_MS`         | ні (`5000`)                       | Таймаут зовнішніх викликів, мс                                                            |
-| `CURSOR_HMAC_SECRET` | ні (dev-дефолт)                   | HMAC для cursor пагінації                                                                 |
 
 Пароль БД: локальний файл `secrets/db_password` (теж у `.gitignore`). Стартове значення має збігатися з `init.sql` (`app-v1-password`).
 
-### Запуск
+### Запуск (основний шлях — без Infisical)
 
 Потрібен Node.js ≥ 22.
 
@@ -106,7 +107,7 @@ npm install
 npm start
 ```
 
-API слухає на порту з `PORT` у `.env` (у `.env.example` — `3000`). Без `PORT` процес не стартує (fail-fast).
+API слухає на порту з `PORT` у `.env` (у `.env.example` — `3000`). Без обовʼязкових змінних процес не стартує (fail-fast).
 
 - `GET /health` — uptime процесу (без рестарту росте)
 - `GET /db` — пробний запит у Postgres через пул
@@ -129,14 +130,80 @@ API слухає на порту з `PORT` у `.env` (у `.env.example` — `300
 printf 'app-v1-password' > secrets/db_password
 ```
 
+### Optional: Infisical
+
+Infisical **не** є залежністю Nest. Тека `infisical/` — локальний lab: self-host сейф + обгортка CLI. На іншій машині можна так само підняти compose, або використати **Infisical Cloud** / інший secret manager — головне, щоб у процесі зʼявились ті самі імена змінних зі схеми.
+
+**Що в git / що ні**
+
+| У git                                             | Не в git                                               |
+| ------------------------------------------------- | ------------------------------------------------------ |
+| `infisical/docker-compose.yml`, `up.sh`, `run.sh` | `infisical/.secrets/*` (machine identity, token cache) |
+| `infisical/machine-identity.env.example`          | `.env`, `secrets/db_password`                          |
+
+Пароль Postgres **лишається у файлі** навіть з Infisical: зміна секрету в vault дає лише новий env-знімок після рестарту процесу; ротація без рестарту на env не працює.
+
+**Що кладемо в сейф зараз:** `CURSOR_HMAC_SECRET`.  
+Несекрети (`PORT`, `DB_URL`, `LOG_LEVEL`, …) зручно тримати в локальному `.env`.
+
+#### Self-host (інший ПК / чистий clone)
+
+Вимоги: Docker, Node ≥ 22, CLI Infisical:
+
+```bash
+npm i -g @infisical/cli
+```
+
+1. Підніми Postgres застосунку (як у основному запуску): `secrets/db_password` + `docker compose up -d --wait`.
+2. Підніми Infisical (окремий compose, порт **21150**; не плутати з Postgres Nest **21110**):
+
+```bash
+bash infisical/up.sh
+# UI: http://localhost:21150
+```
+
+Перший `docker pull` образу Infisical може зайняти час (~2+ GiB).
+
+3. У UI (після першої ініціалізації інстанса): створи проєкт → оточення `dev` → секрет з іменем точно `CURSOR_HMAC_SECRET`.
+4. Створи **Machine Identity** з Universal Auth, додай її до проєкту, скопіюй `clientId` / `clientSecret`.
+5. Локальні креденшели машини (не комітити):
+
+```bash
+mkdir -p infisical/.secrets
+cp infisical/machine-identity.env.example infisical/.secrets/machine-identity.env
+# підстав INFISICAL_URL, INFISICAL_PROJECT_ID, INFISICAL_CLIENT_ID, INFISICAL_CLIENT_SECRET
+```
+
+6. У `.env` залиш несекрети (`PORT`, `DB_URL`, …). Рядок `CURSOR_HMAC_SECRET` можна прибрати або залишити плейсхолдер — значення зі сховища має опинитись у `process.env` через CLI (Nest / dotenv зазвичай не перезаписують уже задані змінні оточення).
+7. Старт:
+
+```bash
+npm run start:infisical
+# те саме: bash infisical/run.sh
+# перевірка інʼєкції без Nest: bash infisical/run.sh dev env | grep CURSOR_HMAC
+```
+
+`infisical/run.sh` читає `machine-identity.env` → (за потреби) логіниться й кешує короткий токен у `machine-token` → **прибирає** довгоживучий `CLIENT_SECRET` з env → `infisical run -- npm run start`. Nest як і раніше валідує лише zod-схему.
+
+#### Cloud Infisical
+
+Той самий `run.sh`: у `machine-identity.env` вкажи URL хмари, `projectId` і machine identity з cloud UI. Compose з `infisical/` тоді не потрібен.
+
+#### Зупинити self-host Infisical
+
+```bash
+docker compose -f infisical/docker-compose.yml down
+# том із даними сейфа: додати -v, якщо треба знести все начисто
+```
+
 Перевірки якості: `npm test`, `npm run openapi:lint`, `npm run check:env`. Доменний каталог і замовлення поки in-memory (Postgres у HW-11 — для пулу й ротації; дані домену — з L12).
 
 ## Журнал рішень
 
 - **2026-08-29:** обрано домен Marketplace API для простоти навчання; ціль курсу — production-шлях і Postgres після MongoDB.
-- **2026-08-29:** архітектура — NestJS modular monolith + PostgreSQL + Redis + outbox + S3 + Infisical + Docker/K8s; Express у HW-09 лише як contract adapter.
+- **2026-08-29:** архітектура — NestJS modular monolith + PostgreSQL + Redis + outbox + S3 + Docker/K8s; секрети — через env-контракт (не зашиті в код); Express у HW-09 лише як contract adapter.
 - **2026-08-29:** для ДЗ №9 — варіант Б (runtime-валідація) і contract-тести; валюта в контракті лишається `USD`.
 - **2026-08-29:** у план закладено guest/admin, UAH/USD/EUR з зовнішнім курсом, платежі через LiqPay (sandbox + webhook); зараз — mock payment contract.
 - **2026-09-07 (HW-11):** fail-fast env (zod + ConfigModule), `.env.example`/`check:env`, секрети поза git/образом, ротація `secrets/db_password` без рестарту (`rotate.sh` + `pg.Pool` password function).
-- **2026-09-07:** Infisical свідомо не в PR HW-11 (встигнути здати HW-11); доробити після здачі, до старту HW-12.
+- **2026-09-09:** Infisical як **optional** lab (`infisical/` + `npm run start:infisical`): Nest лишається 12-factor; у vault — `CURSOR_HMAC_SECRET`; пароль БД лишається файлом (AC5 ≠ env-знімок Infisical).
 - Наступні зміни архітектури додаються сюди з причиною та наслідками, а не приховуються переписуванням історії.

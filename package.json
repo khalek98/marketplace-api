@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc",
     "start": "npm run build && node dist/main.js",
-    "dev": "nest start --watch",
+    "start:dev": "nest start --watch",
+    "start:infisical": "bash infisical/run.sh",
     "openapi:lint": "redocly lint openapi/openapi.yaml",
     "openapi:bundle": "redocly bundle openapi/openapi.yaml -o spec.json",
     "test": "jest --runInBand",
