@@ -8,7 +8,7 @@ import { Pool, QueryResult, QueryResultRow } from "pg";
 import { Env } from "../config/env.schema";
 
 /**
- * pg.Pool with password loaded from a file on every new connection.
+ * pg.Pool with user+password loaded from a file on every new connection.
  * Env passwords freeze at process start; a file can be rotated without restart.
  */
 @Injectable()
@@ -18,17 +18,38 @@ export class DatabaseService implements OnModuleDestroy {
 
   constructor(config: ConfigService<Env, true>) {
     const dbUrl = new URL(config.get("DB_URL", { infer: true }));
-    const secretFile = resolve(process.cwd(), config.get("DB_PASSWORD_FILE", { infer: true }));
+    const authFile = resolve(process.cwd(), config.get("DB_AUTH_FILE", { infer: true }));
+
+    const readAuth = async () => {
+      const [user, password] = (await readFile(authFile, "utf8")).trim().split("\n");
+      if (!user || !password) throw new Error(`Bad auth file: ${authFile}`);
+      return { user: user.trim(), password: password.trim() };
+    };
 
     this.pool = new Pool({
       host: dbUrl.hostname,
       port: Number(dbUrl.port || 5432),
       database: dbUrl.pathname.replace(/^\//, ""),
-      user: decodeURIComponent(dbUrl.username),
-      // Heart of AC5: driver calls this for each new connection after terminate.
-      password: async () => (await readFile(secretFile, "utf8")).trim(),
       max: 3,
     });
+
+    const originalConnect = this.pool.connect.bind(this.pool);
+    this.pool.connect = ((cb?: any) => {
+      const run = async () => {
+        const auth = await readAuth();
+        (this.pool as Pool).options.user = auth.user;
+        (this.pool as Pool).options.password = auth.password;
+        return originalConnect();
+      };
+      if (cb) {
+        run().then(
+          (c) => cb(null, c),
+          (e) => cb(e),
+        );
+        return;
+      }
+      return run();
+    }) as typeof this.pool.connect;
 
     // Required: pg_terminate_backend emits 'error' on idle clients; without a
     // listener Node crashes with Unhandled 'error' event.

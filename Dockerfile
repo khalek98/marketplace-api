@@ -1,15 +1,16 @@
-FROM node:22-slim
-
+FROM node:22-slim AS builder
 WORKDIR /app
-
 COPY package.json package-lock.json ./
-
 RUN npm ci
-
 COPY . .
-
 RUN npm run build
 
-USER node
+FROM node:22-slim AS runner
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/openapi ./openapi
 
+USER node
 CMD ["node", "dist/main.js"]

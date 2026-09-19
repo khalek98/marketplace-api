@@ -49,7 +49,7 @@ User stories:
 - **Redis** — cache каталогу і idempotency keys з TTL; не source of truth.
 - **Outbox** — `order.placed` пишеться разом із замовленням; worker публікує в чергу, споживачі ідемпотентні.
 - **S3** — зображення через presigned URL; у БД лише метадані.
-- **Секрети через `process.env` + zod** — Nest не знає про Infisical/Vault; хто завгодно може подати змінні (`.env`, Infisical, cloud SM, K8s). Пароль Postgres — окремо у файлі (ротація без рестарту).
+- **Секрети через** `process.env` **+ zod** — Nest не знає про Infisical/Vault; хто завгодно може подати змінні (`.env`, Infisical, cloud SM, K8s). Креденшели Postgres — окремо у файлі `secrets/db_auth` (ротація без рестарту, alternating users).
 - **Docker + Kubernetes** — локальна розробка в контейнерах; цільовий deploy — окремі процеси API й outbox worker у K8s.
 
 ## Trade-offs
@@ -76,22 +76,22 @@ User stories:
 
 Конфіг проходить fail-fast через zod (`src/config/env.schema.ts`) і `ConfigModule.validate`. Nest читає лише `process.env` — йому байдуже, хто підставив значення (`.env`, Infisical, інший secret manager).
 
-Пароль Postgres — **не** з env для пулу: файл `secrets/db_password` + `password: () => readFile(...)`, щоб ротувати без рестарту процесу (AC HW-11).
+Креденшели Postgres — **не** з env для пулу: файл `secrets/db_auth` (рядок 1 = role, рядок 2 = password). Пул читає **user і password** з файла на кожне нове зʼєднання, щоб ротувати без рестарту процесу (AC HW-11). Шаблон — `secrets/db_auth.example`.
 
 ### Змінні середовища
 
 Повний контракт — `.env.example` (звірка: `npm run check:env`). Реальний `.env` у `.gitignore`.
 
-| Змінна               | Обовʼязкова                       | Опис                                                                                      |
-| -------------------- | --------------------------------- | ----------------------------------------------------------------------------------------- |
-| `PORT`               | так                               | HTTP-порт API                                                                             |
-| `DB_URL`             | так                               | `postgres://…` для host/port/db/**user**. Пароль з URL **ігнорується** — береться з файлу |
-| `CURSOR_HMAC_SECRET` | так                               | HMAC для cursor пагінації (без дефолту в схемі — має прийти ззовні)                       |
-| `DB_PASSWORD_FILE`   | ні (дефолт `secrets/db_password`) | Шлях до файлу з паролем Postgres                                                          |
-| `LOG_LEVEL`          | ні (`info`)                       | `debug` \| `info` \| `warn` \| `error`                                                    |
-| `TIMEOUT_MS`         | ні (`5000`)                       | Таймаут зовнішніх викликів, мс                                                            |
+| Змінна               | Обовʼязкова                   | Опис                                                                                      |
+| -------------------- | ----------------------------- | ----------------------------------------------------------------------------------------- |
+| `PORT`               | так                           | HTTP-порт API                                                                             |
+| `DB_URL`             | так                           | `postgres://…` для host/port/db. **User і password з URL ігноруються** — беруться з файла |
+| `CURSOR_HMAC_SECRET` | так                           | HMAC для cursor пагінації (без дефолту в схемі — має прийти ззовні)                       |
+| `DB_AUTH_FILE`       | ні (дефолт `secrets/db_auth`) | Шлях до файла з role + password Postgres (два рядки)                                      |
+| `LOG_LEVEL`          | ні (`info`)                   | `debug` \| `info` \| `warn` \| `error`                                                    |
+| `TIMEOUT_MS`         | ні (`5000`)                   | Таймаут зовнішніх викликів, мс                                                            |
 
-Пароль БД: локальний файл `secrets/db_password` (теж у `.gitignore`). Стартове значення має збігатися з `init.sql` (`app-v1-password`).
+Креденшели БД: локальний файл `secrets/db_auth` (тека `secrets/*` у `.gitignore`, окрім `*.example`). Стартові значення мають збігатися з `init.sql` (`app_user_a` / `app-v1-password`).
 
 ### Запуск (основний шлях — без Infisical)
 
@@ -100,7 +100,7 @@ User stories:
 ```bash
 cp .env.example .env
 mkdir -p secrets
-printf 'app-v1-password' > secrets/db_password
+cp secrets/db_auth.example secrets/db_auth
 
 docker compose up -d --wait
 npm install
@@ -116,18 +116,19 @@ API слухає на порту з `PORT` у `.env` (у `.env.example` — `300
 
 ### Ротація пароля БД без рестарту
 
-Порядок у `rotate.sh`: `ALTER ROLE` → оновити файл → `pg_terminate_backend`. Пул читає пароль з файлу на **кожне нове** зʼєднання (`password: async () => readFile(...)`).
+У БД дві ролі: `app_user_a` і `app_user_b` (`init.sql`). `rotate.sh` ротує **неактивну** роль → атомарно переписує `secrets/db_auth` на неї → `pg_terminate_backend` для **старої**. Пул на кожне нове зʼєднання читає з файла і user, і password — процес API не рестартує.
 
 1. Запусти Postgres і API (див. вище).
 2. Запамʼятай uptime: `curl -s http://localhost:3000/health`
 3. У іншому терміналі: `bash rotate.sh`
-4. Перевір БД: `curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/db` → `200`
+4. Перевір БД: `curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/db` → `200` (у відповіді `current_user` зміниться на іншу роль)
 5. Знову `curl -s http://localhost:3000/health` — `uptimeSec` **більший**, ніж у кроці 2 (процес не перезапускався)
 
-Після `docker compose down -v` Postgres знову бере пароль з `init.sql`, а файл може лишитись ротованим. Поверни файл:
+Після `docker compose down -v` Postgres знову бере паролі з `init.sql`, а файл може лишитись ротованим. Поверни файл:
 
 ```bash
-printf 'app-v1-password' > secrets/db_password
+cp secrets/db_auth.example secrets/db_auth
+# або: printf 'app_user_a\napp-v1-password\n' > secrets/db_auth
 ```
 
 ### Optional: Infisical
@@ -139,7 +140,7 @@ Infisical **не** є залежністю Nest. Тека `infisical/` — ло�
 | У git                                             | Не в git                                               |
 | ------------------------------------------------- | ------------------------------------------------------ |
 | `infisical/docker-compose.yml`, `up.sh`, `run.sh` | `infisical/.secrets/*` (machine identity, token cache) |
-| `infisical/machine-identity.env.example`          | `.env`, `secrets/db_password`                          |
+| `infisical/machine-identity.env.example`          | `.env`, `secrets/db_auth`                              |
 
 Пароль Postgres **лишається у файлі** навіть з Infisical: зміна секрету в vault дає лише новий env-знімок після рестарту процесу; ротація без рестарту на env не працює.
 
@@ -154,7 +155,7 @@ Infisical **не** є залежністю Nest. Тека `infisical/` — ло�
 npm i -g @infisical/cli
 ```
 
-1. Підніми Postgres застосунку (як у основному запуску): `secrets/db_password` + `docker compose up -d --wait`.
+1. Підніми Postgres застосунку (як у основному запуску): `secrets/db_auth` + `docker compose up -d --wait`.
 2. Підніми Infisical (окремий compose, порт **21150**; не плутати з Postgres Nest **21110**):
 
 ```bash
@@ -206,4 +207,5 @@ docker compose -f infisical/docker-compose.yml down
 - **2026-08-29:** у план закладено guest/admin, UAH/USD/EUR з зовнішнім курсом, платежі через LiqPay (sandbox + webhook); зараз — mock payment contract.
 - **2026-09-07 (HW-11):** fail-fast env (zod + ConfigModule), `.env.example`/`check:env`, секрети поза git/образом, ротація `secrets/db_password` без рестарту (`rotate.sh` + `pg.Pool` password function).
 - **2026-09-09:** Infisical як **optional** lab (`infisical/` + `npm run start:infisical`): Nest лишається 12-factor; у vault — `CURSOR_HMAC_SECRET`; пароль БД лишається файлом (AC5 ≠ env-знімок Infisical).
+- **2026-09-19 (HW-11 review):** грейдер прийняв AC, але вказав три правки після здачі. (1) Між `ALTER ROLE` і записом файла нові зʼєднання ще брали старий пароль — вікно закриваємо **alternating users**: дві ролі `app_user_a`/`app_user_b`, ротуємо неактивну, потім перемикаємо файл; замість `secrets/db_password` (лише пароль) — `secrets/db_auth` (role + password), пул читає обидва на connect, `DB_PASSWORD_FILE` → `DB_AUTH_FILE`. (2) Підказка в `rotate.sh` друкувала `localhost:${PORT:-3000}`, хоча `PORT` живе лише в `.env` — скрипт тепер читає PORT з `.env`. (3) Single-stage Dockerfile тягнув `devDependencies` і `src` у рантайм — multi-stage builder + `npm ci --omit=dev`, у runner лише `dist` і `openapi/`.
 - Наступні зміни архітектури додаються сюди з причиною та наслідками, а не приховуються переписуванням історії.
