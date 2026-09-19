@@ -1,6 +1,8 @@
-const initialTimestamp = "2026-08-28T12:00:00.000Z";
+import { Product } from "./products.types";
 
-export const products = [
+const initialTimestamp: string = "2026-08-28T12:00:00.000Z";
+
+export const products: Product[] = [
   {
     id: "product_keyboard",
     seller_id: "seller_aurora",
@@ -69,10 +71,10 @@ export const products = [
   },
 ];
 
-export function findProductById(id) {
+export function findProductById(id: string) {
   return products.find((product) => product.id === id);
 }
 
-export function findProductIndexById(id) {
+export function findProductIndexById(id: string) {
   return products.findIndex((product) => product.id === id);
 }

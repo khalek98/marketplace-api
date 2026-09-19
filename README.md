@@ -2,7 +2,7 @@
 
 Я вже працюю full-stack і збираю продукти в проді, але в цьому курсі хочу пройти саме production-шлях: NestJS, PostgreSQL, Redis, Docker, Kubernetes, CI/CD і секрети. Головна технічна мотивація — навчитися SQL і транзакцій на Postgres після досвіду з MongoDB, і зібрати стабільний сервіс, який витримує навантаження на сучасних інструментах курсу.
 
-README — жива архітектурна записка курсового. Контракт і код зростатимуть у наступних ДЗ; HW-09 фіксує OpenAPI і тонкий runtime-adapter.
+README — жива архітектурна записка курсового. Контракт OpenAPI з HW-09 лишається джерелом правди; рантайм зараз — NestJS (див. журнал рішень).
 
 ## Що це за сервіс
 
@@ -44,12 +44,12 @@ User stories:
 
 ## Архітектурні рішення
 
-- **NestJS modular monolith** — хочу вивчити фреймворк курсу на одному deployable сервісі з модулями каталогу, замовлень, користувачів і подій. Express 4 у HW-09 — лише тонкий contract adapter (`src/app.js`), не фінальний стек.
+- **NestJS modular monolith** — хочу вивчити фреймворк курсу на одному deployable сервісі з модулями каталогу, замовлень, користувачів і подій. Express 4 був лише contract adapter у HW-09; зараз рантайм — Nest (див. журнал).
 - **PostgreSQL** — перша серйозна SQL-база після MongoDB; checkout + декремент stock потребують ACID-транзакції.
 - **Redis** — cache каталогу і idempotency keys з TTL; не source of truth.
 - **Outbox** — `order.placed` пишеться разом із замовленням; worker публікує в чергу, споживачі ідемпотентні.
 - **S3** — зображення через presigned URL; у БД лише метадані.
-- **Infisical** — секрети за курсом, без `.env` у git і з fail-fast валідацією конфігу.
+- **Секрети через** `process.env` **+ zod** — Nest не знає про Infisical/Vault; хто завгодно може подати змінні (`.env`, Infisical, cloud SM, K8s). Креденшели Postgres — окремо у файлі `secrets/db_auth` (ротація без рестарту, alternating users).
 - **Docker + Kubernetes** — локальна розробка в контейнерах; цільовий deploy — окремі процеси API й outbox worker у K8s.
 
 ## Trade-offs
@@ -72,80 +72,140 @@ User stories:
 - Redis cache-aside для каталогу + idempotency storage з TTL.
 - Outbox worker + черга для `order.placed`.
 
-## ДЗ №9: контракт
+## Configuration
 
-Обрано **варіант Б — runtime-валідація на кордоні**. OpenAPI — джерело правди; мінімальний Express 4 adapter перевіряє запити й відповіді. Згодом цю межу збереже NestJS.
+Конфіг проходить fail-fast через zod (`src/config/env.schema.ts`) і `ConfigModule.validate`. Nest читає лише `process.env` — йому байдуже, хто підставив значення (`.env`, Infisical, інший secret manager).
 
-### Запуск і перевірка
+Креденшели Postgres — **не** з env для пулу: файл `secrets/db_auth` (рядок 1 = role, рядок 2 = password). Пул читає **user і password** з файла на кожне нове зʼєднання, щоб ротувати без рестарту процесу (AC HW-11). Шаблон — `secrets/db_auth.example`.
 
-Потрібен Node.js 20 або новіший. Встановіть зафіксовані залежності та запустіть adapter:
+### Змінні середовища
+
+Повний контракт — `.env.example` (звірка: `npm run check:env`). Реальний `.env` у `.gitignore`.
+
+| Змінна               | Обовʼязкова                   | Опис                                                                                      |
+| -------------------- | ----------------------------- | ----------------------------------------------------------------------------------------- |
+| `PORT`               | так                           | HTTP-порт API                                                                             |
+| `DB_URL`             | так                           | `postgres://…` для host/port/db. **User і password з URL ігноруються** — беруться з файла |
+| `CURSOR_HMAC_SECRET` | так                           | HMAC для cursor пагінації (без дефолту в схемі — має прийти ззовні)                       |
+| `DB_AUTH_FILE`       | ні (дефолт `secrets/db_auth`) | Шлях до файла з role + password Postgres (два рядки)                                      |
+| `LOG_LEVEL`          | ні (`info`)                   | `debug` \| `info` \| `warn` \| `error`                                                    |
+| `TIMEOUT_MS`         | ні (`5000`)                   | Таймаут зовнішніх викликів, мс                                                            |
+
+Креденшели БД: локальний файл `secrets/db_auth` (тека `secrets/*` у `.gitignore`, окрім `*.example`). Стартові значення мають збігатися з `init.sql` (`app_user_a` / `app-v1-password`).
+
+### Запуск (основний шлях — без Infisical)
+
+Потрібен Node.js ≥ 22.
 
 ```bash
+cp .env.example .env
+mkdir -p secrets
+cp secrets/db_auth.example secrets/db_auth
+
+docker compose up -d --wait
 npm install
 npm start
 ```
 
-За замовчуванням API доступний на `http://localhost:3000`; порт можна змінити через `PORT`. В іншому терміналі перевірте OpenAPI-контракт. Bundle `spec.json` є generated artifact і не комітиться:
+API слухає на порту з `PORT` у `.env` (у `.env.example` — `3000`). Без обовʼязкових змінних процес не стартує (fail-fast).
+
+- `GET /health` — uptime процесу (без рестарту росте)
+- `GET /db` — пробний запит у Postgres через пул
+
+Перевірка синхронності `.env.example` зі схемою: `npm run check:env`.
+
+### Ротація пароля БД без рестарту
+
+У БД дві ролі: `app_user_a` і `app_user_b` (`init.sql`). `rotate.sh` ротує **неактивну** роль → атомарно переписує `secrets/db_auth` на неї → `pg_terminate_backend` для **старої**. Пул на кожне нове зʼєднання читає з файла і user, і password — процес API не рестартує.
+
+1. Запусти Postgres і API (див. вище).
+2. Запамʼятай uptime: `curl -s http://localhost:3000/health`
+3. У іншому терміналі: `bash rotate.sh`
+4. Перевір БД: `curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/db` → `200` (у відповіді `current_user` зміниться на іншу роль)
+5. Знову `curl -s http://localhost:3000/health` — `uptimeSec` **більший**, ніж у кроці 2 (процес не перезапускався)
+
+Після `docker compose down -v` Postgres знову бере паролі з `init.sql`, а файл може лишитись ротованим. Поверни файл:
 
 ```bash
-npm run openapi:lint
-npm run openapi:bundle
-
-node -e "const s=require('./spec.json'),M=['get','post','put','patch','delete'];\
- const ops=Object.entries(s.paths).flatMap(([p,v])=>Object.keys(v).filter(m=>M.includes(m)).map(m=>[p,m]));\
- const idem=ops.flatMap(([p,m])=>s.paths[p][m].parameters??[]).find(x=>x.in==='header'&&/idempotency-key/i.test(x.name));\
- console.log('операцій:',ops.length,'· ресурсів:',new Set(Object.keys(s.paths).map(p=>p.split('/')[1])).size);\
- console.log('Idempotency-Key: required =',idem?.required,'· опис, символів =',(idem?.description??'').trim().length)"
+cp secrets/db_auth.example secrets/db_auth
+# або: printf 'app_user_a\napp-v1-password\n' > secrets/db_auth
 ```
 
-Автоматичні contract-тести (`test/**/*.test.js`, без окремого процесу — app слухає на випадковому порту):
+### Optional: Infisical
+
+Infisical **не** є залежністю Nest. Тека `infisical/` — локальний lab: self-host сейф + обгортка CLI. На іншій машині можна так само підняти compose, або використати **Infisical Cloud** / інший secret manager — головне, щоб у процесі зʼявились ті самі імена змінних зі схеми.
+
+**Що в git / що ні**
+
+| У git                                             | Не в git                                               |
+| ------------------------------------------------- | ------------------------------------------------------ |
+| `infisical/docker-compose.yml`, `up.sh`, `run.sh` | `infisical/.secrets/*` (machine identity, token cache) |
+| `infisical/machine-identity.env.example`          | `.env`, `secrets/db_auth`                              |
+
+Пароль Postgres **лишається у файлі** навіть з Infisical: зміна секрету в vault дає лише новий env-знімок після рестарту процесу; ротація без рестарту на env не працює.
+
+**Що кладемо в сейф зараз:** `CURSOR_HMAC_SECRET`.  
+Несекрети (`PORT`, `DB_URL`, `LOG_LEVEL`, …) зручно тримати в локальному `.env`.
+
+#### Self-host (інший ПК / чистий clone)
+
+Вимоги: Docker, Node ≥ 22, CLI Infisical:
 
 ```bash
-npm test
+npm i -g @infisical/cli
 ```
 
-Форматування коду — Prettier через `npm run format`.
-
-HTTP-перевірки варіанта Б (curl):
+1. Підніми Postgres застосунку (як у основному запуску): `secrets/db_auth` + `docker compose up -d --wait`.
+2. Підніми Infisical (окремий compose, порт **21150**; не плутати з Postgres Nest **21110**):
 
 ```bash
-# Спека вимагає Idempotency-Key: очікується 400 problem+json.
-curl -i -X POST http://localhost:3000/orders \
-  -H 'Content-Type: application/json' \
-  -d '{"items":[{"product_id":"product_keyboard","quantity":1}]}'
-
-# Порожній items відхиляється request validator: очікується 400 problem+json.
-curl -i -X POST http://localhost:3000/orders \
-  -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: empty-items-demo' \
-  -d '{"items":[]}'
-
-# Перша спроба створює замовлення: очікується 201 та Location.
-curl -i -X POST http://localhost:3000/orders \
-  -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: checkout-demo-1' \
-  -d '{"items":[{"product_id":"product_keyboard","quantity":1}]}'
-
-# Той самий ключ і тіло повертають те саме замовлення:
-# очікується 201 та Idempotency-Replay: true.
-curl -i -X POST http://localhost:3000/orders \
-  -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: checkout-demo-1' \
-  -d '{"items":[{"product_id":"product_keyboard","quantity":1}]}'
-
-# Той самий ключ з іншим тілом: очікується 422 problem+json.
-curl -i -X POST http://localhost:3000/orders \
-  -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: checkout-demo-1' \
-  -d '{"items":[{"product_id":"product_mouse","quantity":1}]}'
+bash infisical/up.sh
+# UI: http://localhost:21150
 ```
 
-Дані, залишки та idempotency records поки зберігаються лише в памʼяті процесу й очищаються після перезапуску. У наступних ДЗ доменні дані перейдуть у PostgreSQL, а idempotency storage — у Redis із TTL.
+Перший `docker pull` образу Infisical може зайняти час (~2+ GiB).
+
+3. У UI (після першої ініціалізації інстанса): створи проєкт → оточення `dev` → секрет з іменем точно `CURSOR_HMAC_SECRET`.
+4. Створи **Machine Identity** з Universal Auth, додай її до проєкту, скопіюй `clientId` / `clientSecret`.
+5. Локальні креденшели машини (не комітити):
+
+```bash
+mkdir -p infisical/.secrets
+cp infisical/machine-identity.env.example infisical/.secrets/machine-identity.env
+# підстав INFISICAL_URL, INFISICAL_PROJECT_ID, INFISICAL_CLIENT_ID, INFISICAL_CLIENT_SECRET
+```
+
+6. У `.env` залиш несекрети (`PORT`, `DB_URL`, …). Рядок `CURSOR_HMAC_SECRET` можна прибрати або залишити плейсхолдер — значення зі сховища має опинитись у `process.env` через CLI (Nest / dotenv зазвичай не перезаписують уже задані змінні оточення).
+7. Старт:
+
+```bash
+npm run start:infisical
+# те саме: bash infisical/run.sh
+# перевірка інʼєкції без Nest: bash infisical/run.sh dev env | grep CURSOR_HMAC
+```
+
+`infisical/run.sh` читає `machine-identity.env` → (за потреби) логіниться й кешує короткий токен у `machine-token` → **прибирає** довгоживучий `CLIENT_SECRET` з env → `infisical run -- npm run start`. Nest як і раніше валідує лише zod-схему.
+
+#### Cloud Infisical
+
+Той самий `run.sh`: у `machine-identity.env` вкажи URL хмари, `projectId` і machine identity з cloud UI. Compose з `infisical/` тоді не потрібен.
+
+#### Зупинити self-host Infisical
+
+```bash
+docker compose -f infisical/docker-compose.yml down
+# том із даними сейфа: додати -v, якщо треба знести все начисто
+```
+
+Перевірки якості: `npm test`, `npm run openapi:lint`, `npm run check:env`. Доменний каталог і замовлення поки in-memory (Postgres у HW-11 — для пулу й ротації; дані домену — з L12).
 
 ## Журнал рішень
 
 - **2026-08-29:** обрано домен Marketplace API для простоти навчання; ціль курсу — production-шлях і Postgres після MongoDB.
-- **2026-08-29:** архітектура — NestJS modular monolith + PostgreSQL + Redis + outbox + S3 + Infisical + Docker/K8s; Express у HW-09 лише як contract adapter.
+- **2026-08-29:** архітектура — NestJS modular monolith + PostgreSQL + Redis + outbox + S3 + Docker/K8s; секрети — через env-контракт (не зашиті в код); Express у HW-09 лише як contract adapter.
 - **2026-08-29:** для ДЗ №9 — варіант Б (runtime-валідація) і contract-тести; валюта в контракті лишається `USD`.
 - **2026-08-29:** у план закладено guest/admin, UAH/USD/EUR з зовнішнім курсом, платежі через LiqPay (sandbox + webhook); зараз — mock payment contract.
+- **2026-09-07 (HW-11):** fail-fast env (zod + ConfigModule), `.env.example`/`check:env`, секрети поза git/образом, ротація `secrets/db_password` без рестарту (`rotate.sh` + `pg.Pool` password function).
+- **2026-09-09:** Infisical як **optional** lab (`infisical/` + `npm run start:infisical`): Nest лишається 12-factor; у vault — `CURSOR_HMAC_SECRET`; пароль БД лишається файлом (AC5 ≠ env-знімок Infisical).
+- **2026-09-19 (HW-11 review):** грейдер прийняв AC, але вказав три правки після здачі. (1) Між `ALTER ROLE` і записом файла нові зʼєднання ще брали старий пароль — вікно закриваємо **alternating users**: дві ролі `app_user_a`/`app_user_b`, ротуємо неактивну, потім перемикаємо файл; замість `secrets/db_password` (лише пароль) — `secrets/db_auth` (role + password), пул читає обидва на connect, `DB_PASSWORD_FILE` → `DB_AUTH_FILE`. (2) Підказка в `rotate.sh` друкувала `localhost:${PORT:-3000}`, хоча `PORT` живе лише в `.env` — скрипт тепер читає PORT з `.env`. (3) Single-stage Dockerfile тягнув `devDependencies` і `src` у рантайм — multi-stage builder + `npm ci --omit=dev`, у runner лише `dist` і `openapi/`.
 - Наступні зміни архітектури додаються сюди з причиною та наслідками, а не приховуються переписуванням історії.

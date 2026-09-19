@@ -1,4 +1,4 @@
-export function canonicalize(value) {
+export function canonicalize(value: any): string {
   if (Array.isArray(value)) {
     return `[${value.map(canonicalize).join(",")}]`;
   }

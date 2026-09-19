@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.git
+test/
+
+npm-debug.log
+.gitignore
+Dockerfile*
+docker-compose*
+*.md
+coverage
+.DS_Store
+
+.env
+secrets/

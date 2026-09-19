@@ -1,19 +1,12 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { ApplicationError } from "../errors/application-error.js";
 
-const DEFAULT_CURSOR_HMAC_SECRET = "dev-cursor-hmac-secret";
+import { ApplicationError } from "../common/errors/application-error";
 
-function getCursorSecret() {
-  return process.env.CURSOR_HMAC_SECRET || DEFAULT_CURSOR_HMAC_SECRET;
+function signPayload(payloadB64: string, cursorHmacSecret: string) {
+  return createHmac("sha256", cursorHmacSecret).update(payloadB64).digest("base64url");
 }
 
-function signPayload(payloadB64) {
-  return createHmac("sha256", getCursorSecret())
-    .update(payloadB64)
-    .digest("base64url");
-}
-
-function safeEqual(a, b) {
+function safeEqual(a: string, b: string) {
   const aBuf = Buffer.from(a);
   const bBuf = Buffer.from(b);
   if (aBuf.length !== bBuf.length) {
@@ -22,16 +15,13 @@ function safeEqual(a, b) {
   return timingSafeEqual(aBuf, bBuf);
 }
 
-export function encodeCursor(productId) {
-  const payloadB64 = Buffer.from(
-    JSON.stringify({ version: 1, after: productId }),
-    "utf8",
-  ).toString("base64url");
-  const signature = signPayload(payloadB64);
+export function encodeCursor(productId: string, cursorHmacSecret: string) {
+  const payloadB64 = Buffer.from(JSON.stringify({ version: 1, after: productId }), "utf8").toString("base64url");
+  const signature = signPayload(payloadB64, cursorHmacSecret);
   return `${payloadB64}.${signature}`;
 }
 
-export function decodeCursor(cursor) {
+export function decodeCursor(cursor: string, cursorHmacSecret: string) {
   try {
     if (typeof cursor !== "string" || !cursor.includes(".")) {
       throw new Error("Cursor is missing signature.");
@@ -48,14 +38,12 @@ export function decodeCursor(cursor) {
       throw new Error("Cursor format is invalid.");
     }
 
-    const expected = signPayload(payloadB64);
+    const expected = signPayload(payloadB64, cursorHmacSecret);
     if (!safeEqual(signature, expected)) {
       throw new Error("Cursor signature mismatch.");
     }
 
-    const parsed = JSON.parse(
-      Buffer.from(payloadB64, "base64url").toString("utf8"),
-    );
+    const parsed = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8"));
     const keys = Object.keys(parsed).sort();
     if (
       parsed.version !== 1 ||

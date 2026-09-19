@@ -4,4 +4,7 @@ spec.json
 course-materials/
 
 .env
+secrets/*
+!secrets/*.example
+.secrets/
 .DS_Store
