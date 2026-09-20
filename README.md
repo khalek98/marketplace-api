@@ -150,9 +150,16 @@ EXPLAIN «до» індексів (очікуй `Seq Scan` у кожному):
 for n in 1 2 3 4; do echo "=== q$n ==="; docker compose exec -T db psql -U admin -d shop -c "EXPLAIN (ANALYZE, BUFFERS) $(cat db/queries/q$n.sql)"; done
 ```
 
+Індекси + свіжа статистика, потім EXPLAIN «після» (той самий цикл; для q4 прожени 2–3 рази — перший після GIN холодний):
+
+```bash
+docker compose exec -T db psql -U admin -d shop -f - < db/indexes.sql
+docker compose exec -T db psql -U admin -d shop -c "ANALYZE;"
+```
+
 `DB_URL` для Nest — зі **сховища** (таблиця Configuration); не з нового env-файлу в git.
 
-Ще не в репо: `db/indexes.sql`, `db/OPTIMIZATIONS.md`.
+Ще не в репо: `db/OPTIMIZATIONS.md`.
 
 ### Ротація пароля БД без рестарту
 
