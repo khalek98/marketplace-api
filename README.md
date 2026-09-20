@@ -138,9 +138,15 @@ docker compose exec -T db psql -U admin -d shop -f - < db/schema.sql
 
 Playground на кілька рядків (не seed на 100k): та сама команда з `db/smoke.sql`.
 
+Seed (≥100 000 у `orders` і в `products`; українські назви/описи для q4):
+
+```bash
+docker compose exec -T db psql -U admin -d shop -f - < db/seed.sql
+```
+
 `DB_URL` для Nest — зі **сховища** (таблиця Configuration); не з нового env-файлу в git.
 
-Ще не в репо: `db/seed.sql` (≥100 000 у `orders` і в `products`), `db/queries/q1.sql`–`q4.sql`, `db/indexes.sql`, `db/OPTIMIZATIONS.md`.
+Ще не в репо: `db/queries/q1.sql`–`q4.sql`, `db/indexes.sql`, `db/OPTIMIZATIONS.md`.
 
 ### Ротація пароля БД без рестарту
 
