@@ -2,7 +2,7 @@
 
 Я вже працюю full-stack і збираю продукти в проді, але в цьому курсі хочу пройти саме production-шлях: NestJS, PostgreSQL, Redis, Docker, Kubernetes, CI/CD і секрети. Головна технічна мотивація — навчитися SQL і транзакцій на Postgres після досвіду з MongoDB, і зібрати стабільний сервіс, який витримує навантаження на сучасних інструментах курсу.
 
-README — жива архітектурна записка курсового. Контракт OpenAPI з HW-09 лишається джерелом правди; рантайм зараз — NestJS (див. журнал рішень).
+README — жива архітектурна записка курсового.
 
 ## Що це за сервіс
 
@@ -59,10 +59,10 @@ User stories:
 - **Без мультивалютності в HW-09.** Контракт стабільний з `USD`; UAH/USD/EUR + зовнішній курс (наприклад, НБУ або exchangerate-api) — наступні ДЗ, інакше зараз перепишу OpenAPI заради майбутнього.
 - **Guest / admin / повний auth не в v1 adapter.** Ролі закладені в домен і майбутні Nest-модулі; HW-09 перевіряє контракт каталогу й checkout, а не RBAC.
 - **Snapshot у** `OrderItem`**.** Дублюю назву й ціну, щоб історія замовлення не «пливла» після правок каталогу.
-- **In-memory store у HW-09.** Тимчасово, щоб здати варіант Б; Postgres і Redis з’являться в наступних ДЗ.
+- **HTTP-каталог і checkout поки in-memory.** Контракт HW-09 не чіпаємо; SQL-схема домену вже в `db/schema.sql`, рядки каталогу в API — наступні ДЗ.
 - **Платежі не в HW-09.** Спочатку інваріанти залишку й ідемпотентності; оплату підключу окремим модулем (див. плани нижче).
 
-## Плани після HW-09
+## Плани далі
 
 - Мультивалютність: UAH, USD, EUR; курс з публічного API (НБУ / exchangerate-api — уточню при імплементації).
 - Платежі: зараз mock + контракт webhook; далі **LiqPay**. Обрав його через явний sandbox (`sandbox: 1`), callback на `server_url` з підписом і наявність NestJS-friendly інтеграцій — зручно відпрацювати підтвердження оплати без живих грошей і без зміни HW-09 контракту.
@@ -76,22 +76,20 @@ User stories:
 
 Конфіг проходить fail-fast через zod (`src/config/env.schema.ts`) і `ConfigModule.validate`. Nest читає лише `process.env` — йому байдуже, хто підставив значення (`.env`, Infisical, інший secret manager).
 
-Креденшели Postgres — **не** з env для пулу: файл `secrets/db_auth` (рядок 1 = role, рядок 2 = password). Пул читає **user і password** з файла на кожне нове зʼєднання, щоб ротувати без рестарту процесу (AC HW-11). Шаблон — `secrets/db_auth.example`.
+Креденшели Postgres — **не** з env для пулу: файл `secrets/db_auth` (рядок 1 = role, рядок 2 = password; шаблон `secrets/db_auth.example`). Пул читає обидва на кожне нове зʼєднання, щоб ротувати без рестарту (AC HW-11). Стартові значення мають збігатися з `init.sql` (`app_user_a` / `app-v1-password`). Тека `secrets/*` у `.gitignore`, окрім `*.example`.
 
 ### Змінні середовища
 
 Повний контракт — `.env.example` (звірка: `npm run check:env`). Реальний `.env` у `.gitignore`.
 
-| Змінна               | Обовʼязкова                   | Опис                                                                                      |
-| -------------------- | ----------------------------- | ----------------------------------------------------------------------------------------- |
-| `PORT`               | так                           | HTTP-порт API                                                                             |
-| `DB_URL`             | так                           | `postgres://…` для host/port/db. **User і password з URL ігноруються** — беруться з файла |
-| `CURSOR_HMAC_SECRET` | так                           | HMAC для cursor пагінації (без дефолту в схемі — має прийти ззовні)                       |
-| `DB_AUTH_FILE`       | ні (дефолт `secrets/db_auth`) | Шлях до файла з role + password Postgres (два рядки)                                      |
-| `LOG_LEVEL`          | ні (`info`)                   | `debug` \| `info` \| `warn` \| `error`                                                    |
-| `TIMEOUT_MS`         | ні (`5000`)                   | Таймаут зовнішніх викликів, мс                                                            |
-
-Креденшели БД: локальний файл `secrets/db_auth` (тека `secrets/*` у `.gitignore`, окрім `*.example`). Стартові значення мають збігатися з `init.sql` (`app_user_a` / `app-v1-password`).
+| Змінна               | Обовʼязкова                   | Опис                                                                                                                                                                                            |
+| -------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`               | так                           | HTTP-порт API                                                                                                                                                                                   |
+| `DB_URL`             | так                           | host/port/db для пулу. **Джерело: сховище** (локально gitignored `.env`; optional Infisical). User/password з URL ігноруються — з `secrets/db_auth`. У git лише фейковий рядок у `.env.example` |
+| `CURSOR_HMAC_SECRET` | так                           | HMAC для cursor пагінації (без дефолту в схемі — має прийти ззовні)                                                                                                                             |
+| `DB_AUTH_FILE`       | ні (дефолт `secrets/db_auth`) | Шлях до файла з role + password Postgres (два рядки)                                                                                                                                            |
+| `LOG_LEVEL`          | ні (`info`)                   | `debug` \| `info` \| `warn` \| `error`                                                                                                                                                          |
+| `TIMEOUT_MS`         | ні (`5000`)                   | Таймаут зовнішніх викликів, мс                                                                                                                                                                  |
 
 ### Запуск (основний шлях — без Infisical)
 
@@ -113,6 +111,36 @@ API слухає на порту з `PORT` у `.env` (у `.env.example` — `300
 - `GET /db` — пробний запит у Postgres через пул
 
 Перевірка синхронності `.env.example` зі схемою: `npm run check:env`.
+
+### Postgres (HW-12)
+
+Свіжий клон, без правок файлів. Дев-креденшели стенда — у `docker-compose.yml` (user `admin`, база `shop`).
+
+**Підняти базу:**
+
+```bash
+docker compose up -d --wait
+```
+
+**Підключитись:**
+
+```bash
+docker compose exec -T db psql -U admin -d shop
+```
+
+Таблиці для AC: головна (обсяг) — **`orders`**; пошук q4 — **`products`**.
+
+Застосувати схему (`users`, `products`, `orders`, `order_items`):
+
+```bash
+docker compose exec -T db psql -U admin -d shop -f - < db/schema.sql
+```
+
+Playground на кілька рядків (не seed на 100k): та сама команда з `db/smoke.sql`.
+
+`DB_URL` для Nest — зі **сховища** (таблиця Configuration); не з нового env-файлу в git.
+
+Ще не в репо: `db/seed.sql` (≥100 000 у `orders` і в `products`), `db/queries/q1.sql`–`q4.sql`, `db/indexes.sql`, `db/OPTIMIZATIONS.md`.
 
 ### Ротація пароля БД без рестарту
 
@@ -197,7 +225,7 @@ docker compose -f infisical/docker-compose.yml down
 # том із даними сейфа: додати -v, якщо треба знести все начисто
 ```
 
-Перевірки якості: `npm test`, `npm run openapi:lint`, `npm run check:env`. Доменний каталог і замовлення поки in-memory (Postgres у HW-11 — для пулу й ротації; дані домену — з L12).
+Перевірки якості: `npm test`, `npm run openapi:lint`, `npm run check:env`.
 
 ## Журнал рішень
 
@@ -205,7 +233,8 @@ docker compose -f infisical/docker-compose.yml down
 - **2026-08-29:** архітектура — NestJS modular monolith + PostgreSQL + Redis + outbox + S3 + Docker/K8s; секрети — через env-контракт (не зашиті в код); Express у HW-09 лише як contract adapter.
 - **2026-08-29:** для ДЗ №9 — варіант Б (runtime-валідація) і contract-тести; валюта в контракті лишається `USD`.
 - **2026-08-29:** у план закладено guest/admin, UAH/USD/EUR з зовнішнім курсом, платежі через LiqPay (sandbox + webhook); зараз — mock payment contract.
-- **2026-09-07 (HW-11):** fail-fast env (zod + ConfigModule), `.env.example`/`check:env`, секрети поза git/образом, ротація `secrets/db_password` без рестарту (`rotate.sh` + `pg.Pool` password function).
-- **2026-09-09:** Infisical як **optional** lab (`infisical/` + `npm run start:infisical`): Nest лишається 12-factor; у vault — `CURSOR_HMAC_SECRET`; пароль БД лишається файлом (AC5 ≠ env-знімок Infisical).
-- **2026-09-19 (HW-11 review):** грейдер прийняв AC, але вказав три правки після здачі. (1) Між `ALTER ROLE` і записом файла нові зʼєднання ще брали старий пароль — вікно закриваємо **alternating users**: дві ролі `app_user_a`/`app_user_b`, ротуємо неактивну, потім перемикаємо файл; замість `secrets/db_password` (лише пароль) — `secrets/db_auth` (role + password), пул читає обидва на connect, `DB_PASSWORD_FILE` → `DB_AUTH_FILE`. (2) Підказка в `rotate.sh` друкувала `localhost:${PORT:-3000}`, хоча `PORT` живе лише в `.env` — скрипт тепер читає PORT з `.env`. (3) Single-stage Dockerfile тягнув `devDependencies` і `src` у рантайм — multi-stage builder + `npm ci --omit=dev`, у runner лише `dist` і `openapi/`.
+- **2026-09-07 (HW-11):** конфіг — zod fail-fast + `.env.example`; пароль Postgres — файл, не env, щоб ротувати без рестарту процесу.
+- **2026-09-09:** Infisical як **optional** lab: Nest лишається 12-factor; у vault — `CURSOR_HMAC_SECRET`; пароль БД лишається файлом (ротація без рестарту ≠ env-знімок Infisical).
+- **2026-09-19:** вікно між `ALTER ROLE` і записом файла закриваємо **alternating users** (`app_user_a` / `app_user_b` + `secrets/db_auth` з role і password). Файл лише з паролем не дає змінити роль без рестарту.
+- **2026-09-19 (HW-12):** `products.search_vector` — генерована колонка в `db/schema.sql`, не в індексах. Інакше EXPLAIN «до» не бачить tsvector, і немає з чим порівнювати «після». GIN під пошук житиме в `db/indexes.sql`. Гроші — `numeric`, час — `timestamptz`.
 - Наступні зміни архітектури додаються сюди з причиною та наслідками, а не приховуються переписуванням історії.
