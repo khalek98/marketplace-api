@@ -159,7 +159,7 @@ docker compose exec -T db psql -U admin -d shop -c "ANALYZE;"
 
 `DB_URL` для Nest — зі **сховища** (таблиця Configuration); не з нового env-файлу в git.
 
-Ще не в репо: `db/OPTIMIZATIONS.md`.
+Звіт EXPLAIN до/після + секція «Морфологія»: `db/OPTIMIZATIONS.md`.
 
 ### Ротація пароля БД без рестарту
 
