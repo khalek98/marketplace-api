@@ -144,9 +144,15 @@ Seed (≥100 000 у `orders` і в `products`; українські назви/�
 docker compose exec -T db psql -U admin -d shop -f - < db/seed.sql
 ```
 
+EXPLAIN «до» індексів (очікуй `Seq Scan` у кожному):
+
+```bash
+for n in 1 2 3 4; do echo "=== q$n ==="; docker compose exec -T db psql -U admin -d shop -c "EXPLAIN (ANALYZE, BUFFERS) $(cat db/queries/q$n.sql)"; done
+```
+
 `DB_URL` для Nest — зі **сховища** (таблиця Configuration); не з нового env-файлу в git.
 
-Ще не в репо: `db/queries/q1.sql`–`q4.sql`, `db/indexes.sql`, `db/OPTIMIZATIONS.md`.
+Ще не в репо: `db/indexes.sql`, `db/OPTIMIZATIONS.md`.
 
 ### Ротація пароля БД без рестарту
 
