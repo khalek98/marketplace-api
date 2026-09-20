@@ -50,7 +50,7 @@ User stories:
 - **Outbox** — `order.placed` пишеться разом із замовленням; worker публікує в чергу, споживачі ідемпотентні.
 - **S3** — зображення через presigned URL; у БД лише метадані.
 - **Секрети через** `process.env` **+ zod** — Nest не знає про Infisical/Vault; хто завгодно може подати змінні (`.env`, Infisical, cloud SM, K8s). Креденшели Postgres — окремо у файлі `secrets/db_auth` (ротація без рестарту, alternating users).
-- **Docker + Kubernetes** — локальна розробка в контейнерах; цільовий deploy — окремі процеси API й outbox worker у K8s.
+- **Docker + Kubernetes** — Postgres локально в compose; Nest на хості через npm. Цільовий deploy — окремі процеси API й outbox worker у K8s.
 
 ## Trade-offs
 
@@ -72,28 +72,9 @@ User stories:
 - Redis cache-aside для каталогу + idempotency storage з TTL.
 - Outbox worker + черга для `order.placed`.
 
-## Configuration
+## Запуск
 
-Конфіг проходить fail-fast через zod (`src/config/env.schema.ts`) і `ConfigModule.validate`. Nest читає лише `process.env` — йому байдуже, хто підставив значення (`.env`, Infisical, інший secret manager).
-
-Креденшели Postgres — **не** з env для пулу: файл `secrets/db_auth` (рядок 1 = role, рядок 2 = password; шаблон `secrets/db_auth.example`). Пул читає обидва на кожне нове зʼєднання, щоб ротувати без рестарту (AC HW-11). Стартові значення мають збігатися з `init.sql` (`app_user_a` / `app-v1-password`). Тека `secrets/*` у `.gitignore`, окрім `*.example`.
-
-### Змінні середовища
-
-Повний контракт — `.env.example` (звірка: `npm run check:env`). Реальний `.env` у `.gitignore`.
-
-| Змінна               | Обовʼязкова                   | Опис                                                                                                                                                                                            |
-| -------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PORT`               | так                           | HTTP-порт API                                                                                                                                                                                   |
-| `DB_URL`             | так                           | host/port/db для пулу. **Джерело: сховище** (локально gitignored `.env`; optional Infisical). User/password з URL ігноруються — з `secrets/db_auth`. У git лише фейковий рядок у `.env.example` |
-| `CURSOR_HMAC_SECRET` | так                           | HMAC для cursor пагінації (без дефолту в схемі — має прийти ззовні)                                                                                                                             |
-| `DB_AUTH_FILE`       | ні (дефолт `secrets/db_auth`) | Шлях до файла з role + password Postgres (два рядки)                                                                                                                                            |
-| `LOG_LEVEL`          | ні (`info`)                   | `debug` \| `info` \| `warn` \| `error`                                                                                                                                                          |
-| `TIMEOUT_MS`         | ні (`5000`)                   | Таймаут зовнішніх викликів, мс                                                                                                                                                                  |
-
-### Запуск (основний шлях — без Infisical)
-
-Потрібен Node.js ≥ 22.
+Потрібен Node.js ≥ 22. `docker compose` піднімає **лише Postgres**; Nest — на хості через `npm`. Infisical для цього шляху не потрібен.
 
 ```bash
 cp .env.example .env
@@ -110,11 +91,47 @@ API слухає на порту з `PORT` у `.env` (у `.env.example` — `300
 - `GET /health` — uptime процесу (без рестарту росте)
 - `GET /db` — пробний запит у Postgres через пул
 
-Перевірка синхронності `.env.example` зі схемою: `npm run check:env`.
+## Configuration
 
-### Postgres (HW-12)
+Конфіг проходить fail-fast через zod (`src/config/env.schema.ts`) і `ConfigModule.validate`. Nest читає лише `process.env` — йому байдуже, хто підставив значення (`.env`, Infisical, інший secret manager).
 
-Свіжий клон, без правок файлів. Дев-креденшели стенда — у `docker-compose.yml` (user `admin`, база `shop`).
+Креденшели Postgres — **не** з env для пулу: файл `secrets/db_auth` (рядок 1 = role, рядок 2 = password; шаблон `secrets/db_auth.example`). Пул читає обидва на кожне нове зʼєднання, щоб ротувати без рестарту (AC HW-11). Стартові значення мають збігатися з `init.sql` (`app_user_a` / `app-v1-password`). Тека `secrets/*` у `.gitignore`, окрім `*.example`.
+
+Запуск API — секція [Запуск](#запуск) вище. Перевірка синхронності `.env.example` зі схемою: `npm run check:env`.
+
+### Змінні середовища
+
+Повний контракт — `.env.example`. Реальний `.env` у `.gitignore`.
+
+| Змінна               | Обовʼязкова                   | Опис                                                                                                                                                                                            |
+| -------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`               | так                           | HTTP-порт API                                                                                                                                                                                   |
+| `DB_URL`             | так                           | host/port/db для пулу. **Джерело: сховище** (локально gitignored `.env`; optional Infisical). User/password з URL ігноруються — з `secrets/db_auth`. У git лише фейковий рядок у `.env.example` |
+| `CURSOR_HMAC_SECRET` | так                           | HMAC для cursor пагінації (без дефолту в схемі — має прийти ззовні)                                                                                                                             |
+| `DB_AUTH_FILE`       | ні (дефолт `secrets/db_auth`) | Шлях до файла з role + password Postgres (два рядки)                                                                                                                                            |
+| `LOG_LEVEL`          | ні (`info`)                   | `debug` \| `info` \| `warn` \| `error`                                                                                                                                                          |
+| `TIMEOUT_MS`         | ні (`5000`)                   | Таймаут зовнішніх викликів, мс                                                                                                                                                                  |
+
+### Ротація пароля БД без рестарту
+
+У БД дві ролі: `app_user_a` і `app_user_b` (`init.sql`). `rotate.sh` ротує **неактивну** роль → атомарно переписує `secrets/db_auth` на неї → `pg_terminate_backend` для **старої**. Пул на кожне нове зʼєднання читає з файла і user, і password — процес API не рестартує.
+
+1. Запусти Postgres і API (див. вище).
+2. Запамʼятай uptime: `curl -s http://localhost:3000/health`
+3. У іншому терміналі: `bash rotate.sh`
+4. Перевір БД: `curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/db` → `200` (у відповіді `current_user` зміниться на іншу роль)
+5. Знову `curl -s http://localhost:3000/health` — `uptimeSec` **більший**, ніж у кроці 2 (процес не перезапускався)
+
+Після `docker compose down -v` Postgres знову бере паролі з `init.sql`, а файл може лишитись ротованим. Поверни файл:
+
+```bash
+cp secrets/db_auth.example secrets/db_auth
+# або: printf 'app_user_a\napp-v1-password\n' > secrets/db_auth
+```
+
+## Postgres (HW-12)
+
+Свіжий клон, без правок файлів. Дев-креденшели стенда — у `docker-compose.yml` (user `admin`, база `shop`). Compose тут = **лише** база; Nest для SQL-грейдера не потрібен.
 
 **Підняти базу:**
 
@@ -157,28 +174,11 @@ docker compose exec -T db psql -U admin -d shop -f - < db/indexes.sql
 docker compose exec -T db psql -U admin -d shop -c "ANALYZE;"
 ```
 
-`DB_URL` для Nest — зі **сховища** (таблиця Configuration); не з нового env-файлу в git.
+`DB_URL` для Nest — зі **сховища** (таблиця Configuration вище); не з нового env-файлу в git.
 
 Звіт EXPLAIN до/після + секція «Морфологія»: `db/OPTIMIZATIONS.md`.
 
-### Ротація пароля БД без рестарту
-
-У БД дві ролі: `app_user_a` і `app_user_b` (`init.sql`). `rotate.sh` ротує **неактивну** роль → атомарно переписує `secrets/db_auth` на неї → `pg_terminate_backend` для **старої**. Пул на кожне нове зʼєднання читає з файла і user, і password — процес API не рестартує.
-
-1. Запусти Postgres і API (див. вище).
-2. Запамʼятай uptime: `curl -s http://localhost:3000/health`
-3. У іншому терміналі: `bash rotate.sh`
-4. Перевір БД: `curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/db` → `200` (у відповіді `current_user` зміниться на іншу роль)
-5. Знову `curl -s http://localhost:3000/health` — `uptimeSec` **більший**, ніж у кроці 2 (процес не перезапускався)
-
-Після `docker compose down -v` Postgres знову бере паролі з `init.sql`, а файл може лишитись ротованим. Поверни файл:
-
-```bash
-cp secrets/db_auth.example secrets/db_auth
-# або: printf 'app_user_a\napp-v1-password\n' > secrets/db_auth
-```
-
-### Optional: Infisical
+## Optional: Infisical
 
 Infisical **не** є залежністю Nest. Тека `infisical/` — локальний lab: self-host сейф + обгортка CLI. На іншій машині можна так само підняти compose, або використати **Infisical Cloud** / інший secret manager — головне, щоб у процесі зʼявились ті самі імена змінних зі схеми.
 
@@ -194,7 +194,7 @@ Infisical **не** є залежністю Nest. Тека `infisical/` — ло�
 **Що кладемо в сейф зараз:** `CURSOR_HMAC_SECRET`.  
 Несекрети (`PORT`, `DB_URL`, `LOG_LEVEL`, …) зручно тримати в локальному `.env`.
 
-#### Self-host (інший ПК / чистий clone)
+### Self-host (інший ПК / чистий clone)
 
 Вимоги: Docker, Node ≥ 22, CLI Infisical:
 
@@ -233,11 +233,11 @@ npm run start:infisical
 
 `infisical/run.sh` читає `machine-identity.env` → (за потреби) логіниться й кешує короткий токен у `machine-token` → **прибирає** довгоживучий `CLIENT_SECRET` з env → `infisical run -- npm run start`. Nest як і раніше валідує лише zod-схему.
 
-#### Cloud Infisical
+### Cloud Infisical
 
 Той самий `run.sh`: у `machine-identity.env` вкажи URL хмари, `projectId` і machine identity з cloud UI. Compose з `infisical/` тоді не потрібен.
 
-#### Зупинити self-host Infisical
+### Зупинити self-host Infisical
 
 ```bash
 docker compose -f infisical/docker-compose.yml down
