@@ -190,6 +190,66 @@ docker compose exec -T db psql -U admin -d shop -c "ANALYZE;"
 
 Звіт EXPLAIN до/після + секція «Морфологія»: `db/OPTIMIZATIONS.md`.
 
+> **HW-13:** жива схема застосунку для ORM — через TypeORM-міграції (`npm run migrate`), не через `db/schema.sql`. Файли `db/*.sql` лишаються стендом HW-12 (EXPLAIN). У міграції гроші — **integer копійки** (`price_cents` тощо), не `numeric(12,2)`.
+
+## TypeORM (HW-13)
+
+Схема в коді: `src/entities/` + `src/migrations/` + `src/data-source.ts` (`synchronize: false` — схема лише міграціями).
+
+Команди ORM (секрети через `scripts/with-secrets.sh`; для грейдера — `SKIP_VAULT=1`, див. [Grading](#grading)):
+
+```bash
+npm run build
+npm run migrate          # up
+npm run migrate:show     # очікуй [X]
+npm run migrate:revert   # down
+npm run seed             # ідемпотентний seed
+npm run demo:nplus1      # N+1 до/після
+npm run report           # виторг по товарах (QueryBuilder)
+```
+
+### Seed counts (після двох `npm run seed`)
+
+```sql
+SELECT count(*) FROM users;        -- 7
+SELECT count(*) FROM products;     -- 5
+SELECT count(*) FROM orders;       -- 10
+SELECT count(*) FROM order_items;  -- 20
+```
+
+### N+1 (`npm run demo:nplus1`, граф `order → items → product`)
+
+| Стратегія | Запитів |
+| --- | ---: |
+| наївно (`find` + запит у циклі) | **11** (= 1 + N при N = 10) |
+| `relations` / `leftJoinAndSelect` | **1** |
+| `relationLoadStrategy: 'query'` | **5** (= 1 + 2 × рівнів) |
+
+11 росте з N; 1 і 5 — константи.
+
+### Repository vs QueryBuilder
+
+`find()` / `save()` — коли потрібен **граф entity** (CRUD). QueryBuilder + `getRawMany()` — коли результат = **рядки звіту** (JOIN + `SUM` + `GROUP BY`), а не `Product`/`Order`. Звіт: `src/report.ts` (виторг по товарах).
+
+### `onDelete`
+
+- `CASCADE` — `order_items.order` (позиції без замовлення не мають сенсу).
+- `RESTRICT` — `order_items.product`, `products.seller`, `orders.buyer` (історія продажів / замовлень).
+
+Це DB-рівень FK; окремо від ORM `cascade: true` на `Order.items` (збереження графа при `save`).
+
+## Grading
+
+Свіжий клон, чиста БД, без доступу до Infisical. Дев-креденшели стенда (не секрет хмари):
+
+```bash
+docker compose up -d --wait
+export DB_HOST=127.0.0.1 DB_PORT=21110 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
+export SKIP_VAULT=1    # у грейдера немає доступу до сховища
+```
+
+Далі типові AC-команди: `npm ci && npx tsc --noEmit`, `npm run build && npm run migrate && npm run migrate:show`, `npm run migrate:revert && npm run migrate`, `npm run seed && npm run seed`, `npm run demo:nplus1`, `npm run report`.
+
 ## Optional: Infisical
 
 Infisical **не** є залежністю Nest. Тека `infisical/` — локальний lab: self-host сейф + обгортка CLI. На іншій машині можна так само підняти compose, або використати **Infisical Cloud** / інший secret manager — головне, щоб у процесі зʼявились ті самі імена змінних зі схеми.
@@ -268,4 +328,5 @@ docker compose -f infisical/docker-compose.yml down
 - **2026-09-09:** Infisical як **optional** lab: Nest лишається 12-factor; у vault — `CURSOR_HMAC_SECRET`; пароль БД лишається файлом (ротація без рестарту ≠ env-знімок Infisical).
 - **2026-09-19:** вікно між `ALTER ROLE` і записом файла закриваємо **alternating users** (`app_user_a` / `app_user_b` + `secrets/db_auth` з role і password). Файл лише з паролем не дає змінити роль без рестарту.
 - **2026-09-19 (HW-12):** `products.search_vector` — генерована колонка в `db/schema.sql`, не в індексах. Інакше EXPLAIN «до» не бачить tsvector, і немає з чим порівнювати «після». GIN під пошук житиме в `db/indexes.sql`. Гроші — `numeric`, час — `timestamptz`.
+- **2026-09-21 (HW-13):** data layer на TypeORM: entities + міграції (`synchronize: false`), гроші в копійках (`integer`), схема для ORM з `npm run migrate`. `db/schema.sql` лишається стендом HW-12.
 - Наступні зміни архітектури додаються сюди з причиною та наслідками, а не приховуються переписуванням історії.
