@@ -18,7 +18,8 @@
     "migrate:run": "typeorm migration:run -d dist/data-source.js",
     "migrate:show": "bash scripts/with-secrets.sh dev typeorm migration:show -d dist/data-source.js",
     "migrate:revert": "bash scripts/with-secrets.sh dev typeorm migration:revert -d dist/data-source.js",
-    "migrate:generate": "typeorm migration:generate -d dist/data-source.js"
+    "migrate:generate": "typeorm migration:generate -d dist/data-source.js",
+    "seed": "bash scripts/with-secrets.sh dev node dist/seed.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.2.3",
