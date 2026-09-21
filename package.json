@@ -13,7 +13,12 @@
     "test": "jest --runInBand",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check:env": "npm run build --silent && node scripts/check-env-example.mjs"
+    "check:env": "npm run build --silent && node scripts/check-env-example.mjs",
+    "migrate": "bash scripts/with-secrets.sh dev npm run migrate:run",
+    "migrate:run": "typeorm migration:run -d dist/data-source.js",
+    "migrate:show": "bash scripts/with-secrets.sh dev typeorm migration:show -d dist/data-source.js",
+    "migrate:revert": "bash scripts/with-secrets.sh dev typeorm migration:revert -d dist/data-source.js",
+    "migrate:generate": "typeorm migration:generate -d dist/data-source.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.2.3",

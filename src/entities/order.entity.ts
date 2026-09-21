@@ -17,13 +17,13 @@ import { User } from "./user.entity";
 @Check(`"status" IN ('pending', 'placed', 'cancelled')`)
 @Check(`"currency" IN ('USD', 'EUR', 'UAH')`)
 @Check(`"total_amount_cents" >= 0`)
-@Index("idx_orders_buyer_created", ["buyerId", "createdAt"])
 @Index("idx_orders_pending_created", ["createdAt"], { where: `"status" = 'pending'` })
 export class Order {
   @PrimaryGeneratedColumn({ type: "bigint" })
   id!: string;
 
   // Keep buyer row while orders exist (history).
+  // Composite idx_orders_buyer_created(buyer_id, created_at) is added in the Init migration.
   @ManyToOne(() => User, (user) => user.orders, { onDelete: "RESTRICT", nullable: false })
   @JoinColumn({ name: "buyer_id" })
   buyer!: User;
