@@ -61,7 +61,3 @@ CREATE TABLE order_items (
   CONSTRAINT order_items_unit_price_nonnegative CHECK (unit_price >= 0),
   CONSTRAINT order_items_line_total_nonnegative CHECK (line_total >= 0)
 );
-
--- App roles from init.sql (HW-11 alternating-user rotation) need DML on domain tables.
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE users, products, orders, order_items TO app_user_a, app_user_b;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_user_a, app_user_b;
