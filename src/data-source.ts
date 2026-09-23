@@ -2,6 +2,7 @@
 // Credentials only from process.env (Infisical / SKIP_VAULT grader exports).
 import "reflect-metadata";
 import { DataSource } from "typeorm";
+import path from "path";
 
 function postgresOptionsFromEnv(): {
   host: string;
@@ -40,7 +41,7 @@ function postgresOptionsFromEnv(): {
 export default new DataSource({
   type: "postgres",
   ...postgresOptionsFromEnv(),
-  entities: ["dist/entities/**/*.js"],
-  migrations: ["dist/migrations/*.js"],
+  entities: [path.join(__dirname, "entities/**/*.js")],
+  migrations: [path.join(__dirname, "migrations/*.js")],
   synchronize: false,
 });
