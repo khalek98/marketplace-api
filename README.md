@@ -95,7 +95,7 @@ API слухає на порту з `PORT` у `.env` (у `.env.example` — `300
 
 Конфіг проходить fail-fast через zod (`src/config/env.schema.ts`) і `ConfigModule.validate`. Nest читає лише `process.env` — йому байдуже, хто підставив значення (`.env`, Infisical, інший secret manager).
 
-Креденшели Postgres — **не** з env для пулу: файл `secrets/db_auth` (рядок 1 = role, рядок 2 = password; шаблон `secrets/db_auth.example`). Пул читає обидва на кожне нове зʼєднання, щоб ротувати без рестарту (AC HW-11). Стартові значення мають збігатися з `init.sql` (`app_user_a` / `app-v1-password`). Тека `secrets/*` у `.gitignore`, окрім `*.example`.
+Креденшели Postgres — **не** з env для пулу: файл `secrets/db_auth` (рядок 1 = role, рядок 2 = password; шаблон `secrets/db_auth.example`). Пул читає обидва на кожне нове зʼєднання, щоб ротувати пароль без рестарту процесу. Стартові значення мають збігатися з `init.sql` (`app_user_a` / `app-v1-password`). Тека `secrets/*` у `.gitignore`, окрім `*.example`.
 
 Запуск API — секція [Запуск](#запуск) вище. Перевірка синхронності `.env.example` зі схемою: `npm run check:env`.
 
@@ -129,9 +129,17 @@ cp secrets/db_auth.example secrets/db_auth
 # або: printf 'app_user_a\napp-v1-password\n' > secrets/db_auth
 ```
 
-## Postgres (HW-12)
+## Postgres (локальний стенд)
 
-Свіжий клон, без правок файлів. Дев-креденшели стенда — у `docker-compose.yml` (user `admin`, база `shop`). Compose тут = **лише** база; Nest для SQL-грейдера не потрібен.
+Compose піднімає **лише** Postgres. Дев-креденшели — у `docker-compose.yml` (user `admin`, база `shop`, порт хоста **21110**). Ролі застосунку (`app_user_a` / `app_user_b`) створює `init.sql` на first boot (лише `CONNECT`); права на таблиці — окремим кроком після схеми.
+
+**Порядок bootstrap** (чистий volume):
+
+1. `docker compose up -d --wait`
+2. `db/schema.sql` — таблиці
+3. `db/grants.sql` — DML для `app_user_*`
+4. `db/seed.sql` — дані
+5. `db/indexes.sql` + `ANALYZE` — індекси для запитів
 
 **Підняти базу:**
 
@@ -139,13 +147,11 @@ cp secrets/db_auth.example secrets/db_auth
 docker compose up -d --wait
 ```
 
-**Підключитись:**
+**Підключитись як admin:**
 
 ```bash
 docker compose exec -T db psql -U admin -d shop
 ```
-
-Таблиці для AC: головна (обсяг) — **`orders`**; пошук q4 — **`products`**.
 
 Застосувати схему (`users`, `products`, `orders`, `order_items`):
 
@@ -153,15 +159,21 @@ docker compose exec -T db psql -U admin -d shop
 docker compose exec -T db psql -U admin -d shop -f - < db/schema.sql
 ```
 
+Права для ролей застосунку (після schema, поки таблиці вже існують):
+
+```bash
+docker compose exec -T db psql -U admin -d shop -f - < db/grants.sql
+```
+
 Playground на кілька рядків (не seed на 100k): та сама команда з `db/smoke.sql`.
 
-Seed (≥100 000 у `orders` і в `products`; українські назви/описи для q4):
+Seed (≥100 000 у `orders` і в `products`; українські назви/описи для full-text запиту):
 
 ```bash
 docker compose exec -T db psql -U admin -d shop -f - < db/seed.sql
 ```
 
-EXPLAIN «до» індексів (очікуй `Seq Scan` у кожному):
+EXPLAIN «до» індексів (очікуй `Seq Scan` у кожному; головна таблиця обсягу — `orders`, пошук — `products`):
 
 ```bash
 for n in 1 2 3 4; do echo "=== q$n ==="; docker compose exec -T db psql -U admin -d shop -c "EXPLAIN (ANALYZE, BUFFERS) $(cat db/queries/q$n.sql)"; done
