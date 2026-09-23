@@ -14,7 +14,7 @@ SELECT
 FROM generate_series(1, 500) AS gs;
 
 -- 100k products, Ukrainian text, ~1.5% «шкіряні»+«кросівки», status ~95/5.
-INSERT INTO products (seller_id, name, description, price, stock_qty, status, created_at, updated_at)
+INSERT INTO products (seller_id, name, description, price_cents, stock_qty, status, created_at, updated_at)
 SELECT
   5000 + 1 + (x.n % 500),
   CASE
@@ -75,7 +75,7 @@ SELECT
         'Тримає тепло до 12 годин.'
       ])[1 + (x.n % 20)]
   END,
-  round((10 + random() * 4990)::numeric, 2),
+  round((1000 + random() * 499000)),
   (random() * 200)::int,
   CASE WHEN x.r_status < 0.95 THEN 'active' ELSE 'archived' END,
   now() - (random() * interval '730 days'),
@@ -89,7 +89,7 @@ FROM (
 ) AS x;
 
 -- 100k orders, status skew ~93/5/2 (placed/pending/cancelled).
-INSERT INTO orders (buyer_id, status, currency, total_amount, created_at)
+INSERT INTO orders (buyer_id, status, currency, total_amount_cents, created_at)
 SELECT
   1 + (x.n % 5000),
   CASE
@@ -98,7 +98,7 @@ SELECT
     ELSE 'cancelled'
   END,
   (ARRAY['USD', 'EUR', 'UAH'])[1 + (x.n % 3)],
-  round((random() * 5000)::numeric, 2),
+  round((random() * 500000)),
   now() - (random() * interval '730 days')
 FROM (
   SELECT
@@ -108,14 +108,14 @@ FROM (
 ) AS x;
 
 -- One line item per order (name/price snapshot at order time).
-INSERT INTO order_items (order_id, product_id, product_name, quantity, unit_price, line_total)
+INSERT INTO order_items (order_id, product_id, product_name, quantity, unit_price_cents, line_total_cents)
 SELECT
   o.id,
   p.id,
   p.name,
   q.qty,
-  p.price,
-  round(p.price * q.qty, 2)
+  p.price_cents,
+  round(p.price_cents * q.qty)
 FROM orders o
 CROSS JOIN LATERAL (SELECT 1 + ((o.id * 17) % 3)::int AS qty) AS q
 JOIN products p ON p.id = 1 + ((o.id * 31) % (SELECT count(*)::int FROM products));
