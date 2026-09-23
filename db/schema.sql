@@ -23,7 +23,7 @@ CREATE TABLE products (
   seller_id   bigint       NOT NULL REFERENCES users (id),
   name        text         NOT NULL,
   description text         NOT NULL,
-  price       numeric(12, 2) NOT NULL,
+  price_cents       integer NOT NULL,
   stock_qty   integer      NOT NULL,
   status      text         NOT NULL,
   created_at  timestamptz  NOT NULL DEFAULT now(),
@@ -32,7 +32,7 @@ CREATE TABLE products (
     GENERATED ALWAYS AS (to_tsvector('simple', name || ' ' || description)) STORED,
   CONSTRAINT products_name_nonempty CHECK (length(trim(name)) > 0),
   CONSTRAINT products_description_nonempty CHECK (length(trim(description)) > 0),
-  CONSTRAINT products_price_nonnegative CHECK (price >= 0),
+  CONSTRAINT products_price_nonnegative CHECK (price_cents >= 0),
   CONSTRAINT products_stock_nonnegative CHECK (stock_qty >= 0),
   CONSTRAINT products_status_check CHECK (status IN ('active', 'archived'))
 );
@@ -42,11 +42,11 @@ CREATE TABLE orders (
   buyer_id     bigint         NOT NULL REFERENCES users (id),
   status       text           NOT NULL,
   currency     text           NOT NULL DEFAULT 'USD',
-  total_amount numeric(12, 2) NOT NULL,
+  total_amount_cents integer NOT NULL,
   created_at   timestamptz    NOT NULL DEFAULT now(),
   CONSTRAINT orders_status_check CHECK (status IN ('pending', 'placed', 'cancelled')),
   CONSTRAINT orders_currency_check CHECK (currency IN ('USD', 'EUR', 'UAH')),
-  CONSTRAINT orders_total_nonnegative CHECK (total_amount >= 0)
+  CONSTRAINT orders_total_nonnegative CHECK (total_amount_cents >= 0)
 );
 
 CREATE TABLE order_items (
@@ -55,9 +55,9 @@ CREATE TABLE order_items (
   product_id       bigint         NOT NULL REFERENCES products (id),
   product_name     text           NOT NULL,
   quantity         integer        NOT NULL,
-  unit_price       numeric(12, 2) NOT NULL,
-  line_total       numeric(12, 2) NOT NULL,
+  unit_price_cents       integer NOT NULL,
+  line_total_cents       integer NOT NULL,
   CONSTRAINT order_items_quantity_positive CHECK (quantity > 0),
-  CONSTRAINT order_items_unit_price_nonnegative CHECK (unit_price >= 0),
-  CONSTRAINT order_items_line_total_nonnegative CHECK (line_total >= 0)
+  CONSTRAINT order_items_unit_price_nonnegative CHECK (unit_price_cents >= 0),
+  CONSTRAINT order_items_line_total_nonnegative CHECK (line_total_cents >= 0)
 );
