@@ -118,7 +118,7 @@ SELECT
   round(p.price * q.qty, 2)
 FROM orders o
 CROSS JOIN LATERAL (SELECT 1 + ((o.id * 17) % 3)::int AS qty) AS q
-JOIN products p ON p.id = 1 + ((o.id * 31) % 100000);
+JOIN products p ON p.id = 1 + ((o.id * 31) % (SELECT count(*)::int FROM products));
 
 VACUUM (ANALYZE);
 
