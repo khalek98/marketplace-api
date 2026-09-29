@@ -6,7 +6,7 @@ import { Product } from "./entities/product.entity";
 import { User } from "./entities/user.entity";
 import { Wallet } from "./entities/wallet.entity";
 
-const ATTEMPTS = 50;
+const ATTEMPTS = 200;
 const EXPECTED_STOCK = 10;
 
 async function main() {
