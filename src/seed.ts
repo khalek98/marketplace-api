@@ -1,5 +1,3 @@
-// Deterministic marketplace seed for HW-13 demos (N+1, report).
-// Idempotent: second run keeps the same row counts (upsert users/products; orders only if missing).
 import "reflect-metadata";
 
 import dataSource from "./data-source";
@@ -7,19 +5,14 @@ import { Order } from "./entities/order.entity";
 import { OrderItem } from "./entities/order-item.entity";
 import { Product } from "./entities/product.entity";
 import { User } from "./entities/user.entity";
+import { Wallet } from "./entities/wallet.entity";
 
 const SELLERS = [
   { email: "seller1@seed.local", role: "seller" as const },
   { email: "seller2@seed.local", role: "seller" as const },
 ];
 
-const BUYERS = [
-  { email: "buyer1@seed.local", role: "buyer" as const },
-  { email: "buyer2@seed.local", role: "buyer" as const },
-  { email: "buyer3@seed.local", role: "buyer" as const },
-  { email: "buyer4@seed.local", role: "buyer" as const },
-  { email: "buyer5@seed.local", role: "buyer" as const },
-];
+const BUYERS_COUNT = 200;
 
 const PRODUCTS = [
   { name: "Клавіатура", description: "механічна клавіатура", priceCents: 120_000, stockQty: 50 },
@@ -27,6 +20,7 @@ const PRODUCTS = [
   { name: "Монітор", description: "27 дюймів IPS", priceCents: 780_000, stockQty: 12 },
   { name: "Ноутбук", description: "ноутбук для розробки", priceCents: 4_200_000, stockQty: 5 },
   { name: "Хаб USB-C", description: "хаб на 7 портів", priceCents: 89_000, stockQty: 30 },
+  { name: "Race Test", description: "товар для тестування race", priceCents: 1000, stockQty: 10 },
 ];
 
 const ORDER_COUNT = 10;
@@ -38,6 +32,17 @@ async function upsertUser(email: string, role: User["role"]): Promise<User> {
     user = await repo.save(repo.create({ email, role }));
   }
   return user;
+}
+
+async function upsertWallet(buyer: User, balanceCents: number): Promise<void> {
+  const repo = dataSource.getRepository(Wallet);
+  let wallet = await repo.findOne({ where: { userId: buyer.id } });
+  if (!wallet) {
+    wallet = repo.create({ userId: buyer.id, user: buyer, balanceCents });
+  } else {
+    wallet.balanceCents = balanceCents;
+  }
+  await repo.save(wallet);
 }
 
 async function upsertProduct(seller: User, spec: (typeof PRODUCTS)[number]): Promise<Product> {
@@ -56,6 +61,9 @@ async function upsertProduct(seller: User, spec: (typeof PRODUCTS)[number]): Pro
         status: "active",
       }),
     );
+  } else if (spec.name === "Race Test") {
+    product.stockQty = spec.stockQty;
+    product = await repo.save(product);
   }
   return product;
 }
@@ -66,6 +74,7 @@ async function countRows(): Promise<Record<string, number>> {
     products: await dataSource.getRepository(Product).count(),
     orders: await dataSource.getRepository(Order).count(),
     order_items: await dataSource.getRepository(OrderItem).count(),
+    wallets: await dataSource.getRepository(Wallet).count(),
   };
 }
 
@@ -80,8 +89,14 @@ async function main() {
     sellers.push(await upsertUser(s.email, s.role));
   }
   const buyers: User[] = [];
-  for (const b of BUYERS) {
-    buyers.push(await upsertUser(b.email, b.role));
+  for (let i = 0; i < BUYERS_COUNT; i++) {
+    const email = `buyer${i + 1}@seed.local`;
+    buyers.push(await upsertUser(email, "buyer"));
+  }
+
+  // add wallet for each buyer with balance 100000000
+  for (const b of buyers) {
+    await upsertWallet(b, 100_000_000);
   }
 
   const products: Product[] = [];
@@ -90,7 +105,7 @@ async function main() {
     products.push(await upsertProduct(seller, PRODUCTS[i]));
   }
 
-  const buyerEmails = BUYERS.map((b) => b.email);
+  const buyerEmails = buyers.map((b) => b.email);
   const existingOrders = await dataSource
     .getRepository(Order)
     .createQueryBuilder("o")
@@ -143,6 +158,7 @@ async function main() {
   console.log(
     "seed: done (idempotent). Check: SELECT count(*) FROM users; SELECT count(*) FROM products; SELECT count(*) FROM orders; SELECT count(*) FROM order_items;",
   );
+  console.log("seed: wallets count", await dataSource.getRepository(Wallet).count());
 
   await dataSource.destroy();
 }
