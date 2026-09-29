@@ -211,6 +211,9 @@ npm run migrate:revert   # down останньої
 npm run seed             # ідемпотентний seed
 npm run demo:nplus1
 npm run report
+npm run demo:race        # 200× checkout, stock=10 → 10 успіхів
+npm run demo:workers     # SKIP LOCKED, ≥2 воркери
+npm run demo:retry       # REPEATABLE READ + withRetry
 ```
 
 Нова міграція з diff entity ↔ БД (шлях **без** `.ts`; `--` щоб npm не зʼїв аргумент):
@@ -224,8 +227,9 @@ npm run migrate:generate -- src/migrations/AddSomething
 ### Seed counts (після двох `npm run seed`)
 
 ```sql
-SELECT count(*) FROM users;        -- 7
-SELECT count(*) FROM products;     -- 5
+SELECT count(*) FROM users;        -- 202 (2 sellers + 200 buyers)
+SELECT count(*) FROM products;     -- 6 (вкл. «Race Test» зі stock=10)
+SELECT count(*) FROM wallets;      -- 200 (покупці, надлишковий баланс)
 SELECT count(*) FROM orders;       -- 10
 SELECT count(*) FROM order_items;  -- 20
 ```
@@ -251,6 +255,22 @@ SELECT count(*) FROM order_items;  -- 20
 
 Це DB-рівень FK; окремо від ORM `cascade: true` на `Order.items` (збереження графа при `save`).
 
+## Конкурентність
+
+Checkout (`src/checkout/checkout.ts`) — одна транзакція: атомарний `UPDATE … RETURNING` для `stock_qty` і `wallets.balance_cents`, потім INSERT `orders` / `order_items` / `jobs`. Якщо stock або баланс недостатні — ROLLBACK усієї операції (немає orphan-замовлень).
+
+**Чому atomic UPDATE + RETURNING, а не `SELECT … FOR UPDATE`:** умова `stock_qty >= :qty` у тому ж `UPDATE` одночасно перевіряє наявність і блокує рядок; 0 рядків у `RETURNING` = товару немає. Немає вікна між «прочитав stock у JS» і «записав нове значення». Для балансу — той самий патерн. `FOR UPDATE` теж валідний, але тут достатньо одного round-trip на ресурс.
+
+**Retry лише `40001` / `40P01`:** під `REPEATABLE READ` / `SERIALIZABLE` Postgres може відповісти «повтори транзакцію цілком» (serialization failure / deadlock). Це не бізнес-відмова (немає товару / коштів) і не unique/check (`23505` / `23514`) — ті не зникнуть від повтору. Обгортка `src/checkout/with-retry.ts` ловить тільки ці два SQLSTATE, з backoff+jitter, і перезапускає **усю** транзакцію (включно з читаннями). Checkout (`checkout()`) теж обгорнутий у `withRetry` — на випадок deadlock (`40P01`), якщо порядок локів коли-небудь розʼїдеться; `InsufficientStock` / `InsufficientFunds` не ретраяться.
+
+| Демо           | Команда                | Очікуваний результат (локальний прогін)                  |
+| -------------- | ---------------------- | -------------------------------------------------------- |
+| Гонка checkout | `npm run demo:race`    | 200 спроб → **10** успішних, stock=0, відʼємних рядків=0 |
+| Воркери        | `npm run demo:workers` | ≥2 воркери, **оброблено двічі: 0**, час < N×work_ms      |
+| Retry          | `npm run demo:retry`   | ≥1 лог `40001` (або `40P01`) + retry; баланс сходиться   |
+
+`demo:race` сам скидає stock «Race Test» на 10 і піднімає баланси покупців перед `Promise.all` — можна ганяти повторно без ручного SQL. Перед першим прогоном потрібні migrate + seed.
+
 ## Grading
 
 Свіжий клон, чиста БД, без доступу до Infisical. Дев-креденшели стенда (не секрет хмари):
@@ -261,7 +281,7 @@ export DB_HOST=127.0.0.1 DB_PORT=21110 DB_USER=app_user_a DB_PASSWORD=app-v1-pas
 export SKIP_VAULT=1    # у грейдера немає доступу до сховища
 ```
 
-Далі типові AC-команди: `npm ci && npx tsc --noEmit`, `npm run build && npm run migrate && npm run migrate:show`, `npm run migrate:revert && npm run migrate`, `npm run seed && npm run seed`, `npm run demo:nplus1`, `npm run report`.
+Далі: `npm ci && npx tsc --noEmit`, `npm run build && npm run migrate && npm run migrate:show`, `npm run migrate:revert && npm run migrate`, `npm run seed && npm run seed`, `npm run demo:nplus1`, `npm run report`, `npm run demo:race`, `npm run demo:workers`, `npm run demo:retry`.
 
 ## Optional: Infisical
 
@@ -343,4 +363,5 @@ docker compose -f infisical/docker-compose.yml down
 - **2026-09-19 (HW-12):** `products.search_vector` — генерована колонка в `db/schema.sql`, не в індексах. Інакше EXPLAIN «до» не бачить tsvector, і немає з чим порівнювати «після». GIN під пошук житиме в `db/indexes.sql`. Гроші — `numeric`, час — `timestamptz`.
 - **2026-09-21 (HW-13):** data layer на TypeORM: entities + міграції (`synchronize: false`), гроші в копійках (`integer`), схема для ORM з `npm run migrate`. `db/schema.sql` лишається стендом HW-12.
 - **2026-09-29:** README: розділено ORM bootstrap (`SKIP_VAULT` + migrate) і SQL-стенд HW-12; виправлено `psql -T` без `-c`/`-f`; зафіксовано, що TypeORM читає лише `dist/**/*.js`.
+- **2026-09-29 (HW-14):** transactional checkout (atomic UPDATE+RETURNING), таблиця `jobs` + `FOR UPDATE SKIP LOCKED`, retry лише `40001`/`40P01`; демо `demo:race|workers|retry`. Stock захищаємо атомарним UPDATE, не підняттям isolation до SERIALIZABLE.
 - Наступні зміни архітектури додаються сюди з причиною та наслідками, а не приховуються переписуванням історії.
