@@ -40,7 +40,7 @@ async function upsertWallet(buyer: User, balanceCents: number): Promise<void> {
   if (!wallet) {
     wallet = repo.create({ userId: buyer.id, user: buyer, balanceCents });
   } else {
-    wallet.balanceCents = balanceCents; // щоб після race знову був надлишок
+    wallet.balanceCents = balanceCents;
   }
   await repo.save(wallet);
 }
@@ -61,6 +61,9 @@ async function upsertProduct(seller: User, spec: (typeof PRODUCTS)[number]): Pro
         status: "active",
       }),
     );
+  } else if (spec.name === "Race Test") {
+    product.stockQty = spec.stockQty;
+    product = await repo.save(product);
   }
   return product;
 }
