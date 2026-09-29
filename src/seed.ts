@@ -12,7 +12,7 @@ const SELLERS = [
   { email: "seller2@seed.local", role: "seller" as const },
 ];
 
-const BUYERS_COUNT = 50;
+const BUYERS_COUNT = 200;
 
 const PRODUCTS = [
   { name: "Клавіатура", description: "механічна клавіатура", priceCents: 120_000, stockQty: 50 },
@@ -158,7 +158,7 @@ async function main() {
   console.log(
     "seed: done (idempotent). Check: SELECT count(*) FROM users; SELECT count(*) FROM products; SELECT count(*) FROM orders; SELECT count(*) FROM order_items;",
   );
-  console.log("seed: wallets", await dataSource.getRepository(Wallet).find());
+  console.log("seed: wallets count", await dataSource.getRepository(Wallet).count());
 
   await dataSource.destroy();
 }
