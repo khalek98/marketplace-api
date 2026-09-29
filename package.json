@@ -4,7 +4,7 @@
   "description": "Marketplace API (course project)",
   "private": true,
   "scripts": {
-    "build": "tsc",
+    "build": "rm -rf dist && tsc",
     "start": "npm run build && node dist/main.js",
     "start:dev": "nest start --watch",
     "start:infisical": "bash infisical/run.sh",

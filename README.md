@@ -131,81 +131,94 @@ cp secrets/db_auth.example secrets/db_auth
 
 ## Postgres (локальний стенд)
 
-Compose піднімає **лише** Postgres. Дев-креденшели — у `docker-compose.yml` (user `admin`, база `shop`, порт хоста **21110**). Ролі застосунку (`app_user_a` / `app_user_b`) створює `init.sql` на first boot (лише `CONNECT`); права на таблиці — окремим кроком після схеми.
+Compose піднімає **лише** Postgres. Дев-креденшели — у `docker-compose.yml` (user `admin`, база `shop`, порт хоста **21110**). Ролі застосунку (`app_user_a` / `app_user_b`) створює `init.sql` на first boot (`CONNECT` + `CREATE` на `public`).
 
-**Порядок bootstrap** (чистий volume):
+Два шляхи bootstrap — **не змішуй** на одній чистій БД:
 
-1. `docker compose up -d --wait`
-2. `db/schema.sql` — таблиці
-3. `db/grants.sql` — DML для `app_user_*`
-4. `db/seed.sql` — дані
-5. `db/indexes.sql` + `ANALYZE` — індекси для запитів
+| Шлях                        | Навіщо                                  | Схема                                     |
+| --------------------------- | --------------------------------------- | ----------------------------------------- |
+| **ORM (основний з HW-13+)** | Nest, seed, demo, checkout              | `npm run migrate`                         |
+| **SQL-стенд HW-12**         | EXPLAIN до/після індексів, великий seed | `db/schema.sql` → grants → seed → indexes |
 
-**Підняти базу:**
+### ORM bootstrap (з нуля, без Infisical)
+
+Після `docker compose down -v` скинь `secrets/db_auth` з example. У **тій самій** сесії shell:
 
 ```bash
+cp secrets/db_auth.example secrets/db_auth
 docker compose up -d --wait
+
+export SKIP_VAULT=1
+export DB_HOST=127.0.0.1 DB_PORT=21110 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
+
+npm run build
+npm run migrate
+npm run migrate:show   # усі міграції з [X]
+npm run seed
 ```
+
+`npm run migrate` / `seed` / `demo:*` завжди йдуть через `scripts/with-secrets.sh`. Без `SKIP_VAULT=1` CLI лізе на Infisical (**порт 21150**). Локально для стенда без vault — завжди цей export + `DB_*` (як у [Grading](#grading)).
 
 **Підключитись як admin:**
 
 ```bash
-docker compose exec -T db psql -U admin -d shop
+# інтерактивно (є запрошення shop=#)
+docker compose exec db psql -U admin -d shop
+
+# один запит / скрипт (без TTY)
+docker compose exec -T db psql -U admin -d shop -c '\dt'
+docker compose exec -T db psql -U admin -d shop -f - < db/smoke.sql
 ```
 
-Застосувати схему (`users`, `products`, `orders`, `order_items`):
+`-T` вимикає TTY: без `-c` / `-f` / редіректу `psql` мовчки чекає SQL на stdin.
+
+### SQL-стенд HW-12 (EXPLAIN, окремо від ORM)
+
+Не використовуй цей шлях, якщо вже накатав TypeORM-міграції на той самий volume (або зроби `down -v` і обери один шлях).
+
+1. `docker compose up -d --wait`
+2. `db/schema.sql` — таблиці
+3. `db/grants.sql` — DML для `app_user_*`
+4. `db/seed.sql` — ≥100k рядків
+5. `db/indexes.sql` + `ANALYZE`
 
 ```bash
 docker compose exec -T db psql -U admin -d shop -f - < db/schema.sql
-```
-
-Права для ролей застосунку (після schema, поки таблиці вже існують):
-
-```bash
 docker compose exec -T db psql -U admin -d shop -f - < db/grants.sql
-```
-
-Playground на кілька рядків (не seed на 100k): та сама команда з `db/smoke.sql`.
-
-Seed (≥100 000 у `orders` і в `products`; українські назви/описи для full-text запиту):
-
-```bash
 docker compose exec -T db psql -U admin -d shop -f - < db/seed.sql
-```
 
-EXPLAIN «до» індексів (очікуй `Seq Scan` у кожному; головна таблиця обсягу — `orders`, пошук — `products`):
-
-```bash
 for n in 1 2 3 4; do echo "=== q$n ==="; docker compose exec -T db psql -U admin -d shop -c "EXPLAIN (ANALYZE, BUFFERS) $(cat db/queries/q$n.sql)"; done
-```
 
-Індекси + свіжа статистика, потім EXPLAIN «після» (той самий цикл; для q4 прожени 2–3 рази — перший після GIN холодний):
-
-```bash
 docker compose exec -T db psql -U admin -d shop -f - < db/indexes.sql
 docker compose exec -T db psql -U admin -d shop -c "ANALYZE;"
 ```
 
-`DB_URL` для Nest — зі **сховища** (таблиця Configuration вище); не з нового env-файлу в git.
+Звіт EXPLAIN до/після + «Морфологія»: `db/OPTIMIZATIONS.md`.
+`DB_URL` для Nest — зі **сховища** / локального `.env` (таблиця Configuration); не новий env-файл у git.
 
-Звіт EXPLAIN до/після + секція «Морфологія»: `db/OPTIMIZATIONS.md`.
+## TypeORM (HW-13+)
 
-> **HW-13:** жива схема застосунку для ORM — через TypeORM-міграції (`npm run migrate`), не через `db/schema.sql`. Файли `db/*.sql` лишаються стендом HW-12 (EXPLAIN). У міграції гроші — **integer копійки** (`price_cents` тощо), не `numeric(12,2)`.
+Схема в коді: `src/entities/` + `src/migrations/` + `src/data-source.ts` (`synchronize: false` — схема лише міграціями). Гроші в ORM — **integer копійки** (`price_cents` тощо), не `numeric(12,2)` зі стенду HW-12.
 
-## TypeORM (HW-13)
+DataSource читає **`dist/migrations/*.js`** і **`dist/entities/**/*.js`**. Після змін у `src/` завжди `npm run build`, інакше `migrate` / `migrate:show` бачать лише старий `dist`.
 
-Схема в коді: `src/entities/` + `src/migrations/` + `src/data-source.ts` (`synchronize: false` — схема лише міграціями).
+```bash
+# SKIP_VAULT=1 + DB_* уже в сесії (див. ORM bootstrap вище)
+npm run build
+npm run migrate          # up
+npm run migrate:show     # очікуй [X] на всіх файлах у src/migrations
+npm run migrate:revert   # down останньої
+npm run seed             # ідемпотентний seed
+npm run demo:nplus1
+npm run report
+```
 
-Команди ORM (секрети через `scripts/with-secrets.sh`; для грейдера — `SKIP_VAULT=1`, див. [Grading](#grading)):
+Нова міграція з diff entity ↔ БД (шлях **без** `.ts`; `--` щоб npm не зʼїв аргумент):
 
 ```bash
 npm run build
-npm run migrate          # up
-npm run migrate:show     # очікуй [X]
-npm run migrate:revert   # down
-npm run seed             # ідемпотентний seed
-npm run demo:nplus1      # N+1 до/після
-npm run report           # виторг по товарах (QueryBuilder)
+npm run migrate:generate -- src/migrations/AddSomething
+# переглянь згенерований SQL (інколи generate чіпає зайві індекси) → npm run build → npm run migrate
 ```
 
 ### Seed counts (після двох `npm run seed`)
@@ -219,11 +232,11 @@ SELECT count(*) FROM order_items;  -- 20
 
 ### N+1 (`npm run demo:nplus1`, граф `order → items → product`)
 
-| Стратегія | Запитів |
-| --- | ---: |
-| наївно (`find` + запит у циклі) | **11** (= 1 + N при N = 10) |
-| `relations` / `leftJoinAndSelect` | **1** |
-| `relationLoadStrategy: 'query'` | **5** (= 1 + 2 × рівнів) |
+| Стратегія                         |                     Запитів |
+| --------------------------------- | --------------------------: |
+| наївно (`find` + запит у циклі)   | **11** (= 1 + N при N = 10) |
+| `relations` / `leftJoinAndSelect` |                       **1** |
+| `relationLoadStrategy: 'query'`   |    **5** (= 1 + 2 × рівнів) |
 
 11 росте з N; 1 і 5 — константи.
 
@@ -329,4 +342,5 @@ docker compose -f infisical/docker-compose.yml down
 - **2026-09-19:** вікно між `ALTER ROLE` і записом файла закриваємо **alternating users** (`app_user_a` / `app_user_b` + `secrets/db_auth` з role і password). Файл лише з паролем не дає змінити роль без рестарту.
 - **2026-09-19 (HW-12):** `products.search_vector` — генерована колонка в `db/schema.sql`, не в індексах. Інакше EXPLAIN «до» не бачить tsvector, і немає з чим порівнювати «після». GIN під пошук житиме в `db/indexes.sql`. Гроші — `numeric`, час — `timestamptz`.
 - **2026-09-21 (HW-13):** data layer на TypeORM: entities + міграції (`synchronize: false`), гроші в копійках (`integer`), схема для ORM з `npm run migrate`. `db/schema.sql` лишається стендом HW-12.
+- **2026-09-29:** README: розділено ORM bootstrap (`SKIP_VAULT` + migrate) і SQL-стенд HW-12; виправлено `psql -T` без `-c`/`-f`; зафіксовано, що TypeORM читає лише `dist/**/*.js`.
 - Наступні зміни архітектури додаються сюди з причиною та наслідками, а не приховуються переписуванням історії.
