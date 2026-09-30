@@ -131,7 +131,7 @@ cp secrets/db_auth.example secrets/db_auth
 
 ## Postgres (локальний стенд)
 
-Compose піднімає **лише** Postgres. Дев-креденшели — у `docker-compose.yml` (user `admin`, база `shop`, порт хоста **21110**). Ролі застосунку (`app_user_a` / `app_user_b`) створює `init.sql` на first boot (`CONNECT` + `CREATE` на `public`).
+Compose піднімає Postgres (**21110**) і PgBouncer перед ним (**21111**). Застосунок і ORM-скрипти ходять у **21111**; `21110` — прямий Postgres для admin/`psql`/debug. Дев-креденшели — у `docker-compose.yml` (user `admin`, база `shop`). Ролі застосунку (`app_user_a` / `app_user_b`) створює `init.sql` на first boot (`CONNECT` + `CREATE` на `public`).
 
 Два шляхи bootstrap — **не змішуй** на одній чистій БД:
 
@@ -149,7 +149,7 @@ cp secrets/db_auth.example secrets/db_auth
 docker compose up -d --wait
 
 export SKIP_VAULT=1
-export DB_HOST=127.0.0.1 DB_PORT=21110 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
+export DB_HOST=127.0.0.1 DB_PORT=21111 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
 
 npm run build
 npm run migrate
@@ -157,7 +157,7 @@ npm run migrate:show   # усі міграції з [X]
 npm run seed
 ```
 
-`npm run migrate` / `seed` / `demo:*` завжди йдуть через `scripts/with-secrets.sh`. Без `SKIP_VAULT=1` CLI лізе на Infisical (**порт 21150**). Локально для стенда без vault — завжди цей export + `DB_*` (як у [Grading](#grading)).
+`npm run migrate` / `seed` / `demo:*` завжди йдуть через `scripts/with-secrets.sh`. Без `SKIP_VAULT=1` CLI лізе на Infisical (**порт 21150**). Локально для стенда без vault — завжди цей export + `DB_*` (як у [Grading](#grading)). `DB_PORT` / порт у `DB_URL` — **PgBouncer (`21111`)**, не прямий Postgres.
 
 **Підключитись як admin:**
 
@@ -277,9 +277,11 @@ Checkout (`src/checkout/checkout.ts`) — одна транзакція: ато�
 
 ```bash
 docker compose up -d --wait
-export DB_HOST=127.0.0.1 DB_PORT=21110 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
+export DB_HOST=127.0.0.1 DB_PORT=21111 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
 export SKIP_VAULT=1    # у грейдера немає доступу до сховища
 ```
+
+`DB_PORT=21111` — опублікований порт **PgBouncer** (прямий Postgres лишається на `21110`).
 
 Далі: `npm ci && npx tsc --noEmit`, `npm run build && npm run migrate && npm run migrate:show`, `npm run migrate:revert && npm run migrate`, `npm run seed && npm run seed`, `npm run demo:nplus1`, `npm run report`, `npm run demo:race`, `npm run demo:workers`, `npm run demo:retry`.
 
@@ -308,7 +310,7 @@ npm i -g @infisical/cli
 ```
 
 1. Підніми Postgres застосунку (як у основному запуску): `secrets/db_auth` + `docker compose up -d --wait`.
-2. Підніми Infisical (окремий compose, порт **21150**; не плутати з Postgres Nest **21110**):
+2. Підніми Infisical (окремий compose, порт **21150**; не плутати з PgBouncer Nest **21111** / прямим Postgres **21110**):
 
 ```bash
 bash infisical/up.sh
