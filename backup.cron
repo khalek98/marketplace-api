@@ -1,0 +1,2 @@
+# Nightly logical backup (install into crontab; adjust the cd path).
+0 3 * * * cd /path/to/marketplace-api && bash scripts/with-secrets.sh dev bash scripts/backup.sh
