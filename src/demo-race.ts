@@ -1,6 +1,7 @@
 import "reflect-metadata";
 
 import { checkout } from "./checkout/checkout";
+import { ApplicationError } from "./common/errors/application-error";
 import dataSource from "./data-source";
 import { Product } from "./entities/product.entity";
 import { User } from "./entities/user.entity";
@@ -8,6 +9,10 @@ import { Wallet } from "./entities/wallet.entity";
 
 const ATTEMPTS = 200;
 const EXPECTED_STOCK = 10;
+
+function isExpectedCheckoutReject(err: unknown): boolean {
+  return err instanceof ApplicationError && (err.type === "insufficient-stock" || err.type === "insufficient-funds");
+}
 
 async function main() {
   await dataSource.initialize();
@@ -39,8 +44,9 @@ async function main() {
       try {
         await checkout({ buyerId: buyer.id, productId: product.id, qty: 1 });
         return true;
-      } catch {
-        return false;
+      } catch (err) {
+        if (isExpectedCheckoutReject(err)) return false;
+        throw err;
       }
     }),
   );
