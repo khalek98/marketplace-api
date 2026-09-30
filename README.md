@@ -271,6 +271,62 @@ Checkout (`src/checkout/checkout.ts`) — одна транзакція: ато�
 
 `demo:race` сам скидає stock «Race Test» на 10 і піднімає баланси покупців перед `Promise.all` — можна ганяти повторно без ручного SQL. Перед першим прогоном потрібні migrate + seed.
 
+## Data layer ops
+
+### Підняти стек
+
+```bash
+cp secrets/db_auth.example secrets/db_auth   # після down -v / ротації
+docker compose up -d --wait
+```
+
+- Postgres (admin / debug): `127.0.0.1:21110`
+- PgBouncer (app + ORM scripts): `127.0.0.1:21111`
+
+Перевірка через bouncer:
+
+```bash
+PGPASSWORD=app-v1-password psql -h 127.0.0.1 -p 21111 -U app_user_a -d shop -c "SELECT 1"
+PGPASSWORD=app-v1-password psql -h 127.0.0.1 -p 21111 -U app_user_a -d pgbouncer -c "SHOW POOLS"
+```
+
+### Чому `pool_mode = transaction`
+
+Клієнт тримає конект до PgBouncer; справжній backend Postgres видається **лише на час транзакції**, потім повертається в пул (`default_pool_size = 5`). Так багато інстансів app не вичерпують `max_connections` Postgres.
+
+У transaction mode між транзакціями **не** виживає сесійний стан. Зокрема ламаються:
+
+1. **Іменовані prepared statements** (без трекінгу) — у нас `max_prepared_statements = 200` у `pgbouncer/pgbouncer.ini`, щоб TypeORM/`node-pg` працювали.
+2. **`LISTEN` / `NOTIFY`** — підписка прив’язана до backend-сесії, яка може змінитись після `COMMIT`.
+3. **Session advisory locks** — лок лишається на одному `pg_backend_pid()`, а наступний запит клієнта може піти на інший backend.
+4. (також) `SET` поза транзакцією, курсори `WITH HOLD`, тимчасові таблиці на сесію.
+
+Для checkout / `SKIP LOCKED` у **межах однієї транзакції** це ок.
+
+### Бекап
+
+Logical dump у `backups/` (тека в `.gitignore`):
+
+```bash
+export SKIP_VAULT=1
+export DB_HOST=127.0.0.1 DB_PORT=21111 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
+bash scripts/with-secrets.sh dev bash scripts/backup.sh
+# → друкує шлях, напр. …/backups/shop-2026-09-30.dump
+```
+
+Розклад (шаблон): `backup.cron` — щоночі о 03:00; підстав свій абсолютний шлях до репо в crontab.
+
+### Відновлення (restore-drill)
+
+Доводить, що останній дамп піднімається в **чистий** volume і сходиться контрольна сума по `orders`:
+
+```bash
+bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh
+# очікувано: MATCH (exit 0); скрипт сам створює і прибирає сервіс profile drill
+```
+
+Протокол останнього прогону з RTO/RPO: [`RESTORE-DRILL.md`](./RESTORE-DRILL.md).
+
 ## Grading
 
 Свіжий клон, чиста БД, без доступу до Infisical. Дев-креденшели стенда (не секрет хмари):
@@ -283,7 +339,14 @@ export SKIP_VAULT=1    # у грейдера немає доступу до сх
 
 `DB_PORT=21111` — опублікований порт **PgBouncer** (прямий Postgres лишається на `21110`).
 
-Далі: `npm ci && npx tsc --noEmit`, `npm run build && npm run migrate && npm run migrate:show`, `npm run migrate:revert && npm run migrate`, `npm run seed && npm run seed`, `npm run demo:nplus1`, `npm run report`, `npm run demo:race`, `npm run demo:workers`, `npm run demo:retry`.
+Далі (ORM / concurrency): `npm ci && npx tsc --noEmit`, `npm run build && npm run migrate && npm run migrate:show`, `npm run migrate:revert && npm run migrate`, `npm run seed && npm run seed`, `npm run demo:nplus1`, `npm run report`, `npm run demo:race`, `npm run demo:workers`, `npm run demo:retry`.
+
+Бекап і restore-drill (після того як у БД є дані — хоча б після `seed`):
+
+```bash
+bash scripts/with-secrets.sh dev bash scripts/backup.sh
+bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh
+```
 
 ## Optional: Infisical
 
