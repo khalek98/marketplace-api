@@ -257,19 +257,19 @@ SELECT count(*) FROM order_items;  -- 20
 
 ## Конкурентність
 
-Checkout (`src/checkout/checkout.ts`) — одна транзакція: атомарний `UPDATE … RETURNING` для `stock_qty` і `wallets.balance_cents`, потім INSERT `orders` / `order_items` / `jobs`. Якщо stock або баланс недостатні — ROLLBACK усієї операції (немає orphan-замовлень).
+Checkout (`src/checkout/checkout.ts`) — одна транзакція: атомарний `UPDATE … RETURNING` для `stock_qty` і `wallets.balance_cents`, потім INSERT `orders` / `order_items` / `jobs`. Якщо stock або баланс недостатні — `ApplicationError` (`insufficient-stock` / `insufficient-funds`) і ROLLBACK усієї операції (немає orphan-замовлень). HTTP `POST /orders` викликає той самий `checkoutCart` (потрібен `buyer_id` у тілі).
 
 **Чому atomic UPDATE + RETURNING, а не `SELECT … FOR UPDATE`:** умова `stock_qty >= :qty` у тому ж `UPDATE` одночасно перевіряє наявність і блокує рядок; 0 рядків у `RETURNING` = товару немає. Немає вікна між «прочитав stock у JS» і «записав нове значення». Для балансу — той самий патерн. `FOR UPDATE` теж валідний, але тут достатньо одного round-trip на ресурс.
 
-**Retry лише `40001` / `40P01`:** під `REPEATABLE READ` / `SERIALIZABLE` Postgres може відповісти «повтори транзакцію цілком» (serialization failure / deadlock). Це не бізнес-відмова (немає товару / коштів) і не unique/check (`23505` / `23514`) — ті не зникнуть від повтору. Обгортка `src/checkout/with-retry.ts` ловить тільки ці два SQLSTATE, з backoff+jitter, і перезапускає **усю** транзакцію (включно з читаннями). Checkout (`checkout()`) теж обгорнутий у `withRetry` — на випадок deadlock (`40P01`), якщо порядок локів коли-небудь розʼїдеться; `InsufficientStock` / `InsufficientFunds` не ретраяться.
+**Retry лише `40001` / `40P01`:** під `REPEATABLE READ` / `SERIALIZABLE` Postgres може відповісти «повтори транзакцію цілком» (serialization failure / deadlock). Це не бізнес-відмова (немає товару / коштів) і не unique/check (`23505` / `23514`) — ті не зникнуть від повтору. Обгортка `src/checkout/with-retry.ts` ловить тільки ці два SQLSTATE, з backoff+jitter, і перезапускає **усю** транзакцію (включно з читаннями). Checkout теж обгорнутий у `withRetry` — на випадок deadlock (`40P01`); `ApplicationError` бізнес-відмов не ретраяться.
 
-| Демо           | Команда                | Очікуваний результат (локальний прогін)                  |
-| -------------- | ---------------------- | -------------------------------------------------------- |
-| Гонка checkout | `npm run demo:race`    | 200 спроб → **10** успішних, stock=0, відʼємних рядків=0 |
-| Воркери        | `npm run demo:workers` | ≥2 воркери, **оброблено двічі: 0**, час < N×work_ms      |
-| Retry          | `npm run demo:retry`   | ≥1 лог `40001` (або `40P01`) + retry; баланс сходиться   |
+| Демо           | Команда                | Результат прогону (grader / локально)                                               |
+| -------------- | ---------------------- | ----------------------------------------------------------------------------------- |
+| Гонка checkout | `npm run demo:race`    | 200 спроб → **10** успішних, stock=0, відʼємних рядків=0                            |
+| Воркери        | `npm run demo:workers` | 4 воркери, розподіл 3/3/3/3, **оброблено двічі: 0**, час **320 мс** (bound 1200 мс) |
+| Retry          | `npm run demo:retry`   | **1** спійманий `40001` + retry; фінальний баланс **1020**                          |
 
-`demo:race` сам скидає stock «Race Test» на 10 і піднімає баланси покупців перед `Promise.all` — можна ганяти повторно без ручного SQL. Перед першим прогоном потрібні migrate + seed.
+`demo:race` сам скидає stock «Race Test» на 10 і піднімає баланси покупців перед `Promise.all` — можна ганяти повторно без ручного SQL. Перед першим прогоном потрібні migrate + seed. Час воркерів на іншій машині може трохи плавати (локально інколи ~400 мс), інваріанти — `двічі=0` і час < послідовного bound.
 
 ## Data layer ops
 
