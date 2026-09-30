@@ -36,3 +36,22 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+
+  # Clean Postgres for restore-drill only (`docker compose --profile drill …`).
+  restore:
+    image: postgres:16-alpine
+    profiles: ["drill"]
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin-bootstrap-only
+      POSTGRES_DB: shop
+    volumes:
+      - pgdata-restore:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d shop"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+volumes:
+  pgdata-restore:
