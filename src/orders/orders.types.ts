@@ -33,5 +33,6 @@ export type CreateOrderItemRequest = {
 };
 
 export type CreateOrderRequest = {
+  buyer_id: string;
   items: CreateOrderItemRequest[];
 };

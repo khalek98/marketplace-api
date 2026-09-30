@@ -16,3 +16,42 @@ services:
       interval: 2s
       timeout: 2s
       retries: 15
+
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.24.1-p1
+    ports:
+      - "21111:5432"
+    volumes:
+      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "PGPASSWORD=app-v1-password psql -h 127.0.0.1 -p 5432 -U app_user_a -d shop -c 'SELECT 1' >/dev/null",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Clean Postgres for restore-drill only (`docker compose --profile drill …`).
+  restore:
+    image: postgres:16-alpine
+    profiles: ["drill"]
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin-bootstrap-only
+      POSTGRES_DB: shop
+    volumes:
+      - pgdata-restore:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d shop"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+volumes:
+  pgdata-restore:

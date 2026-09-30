@@ -1,21 +1,42 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
+
+import { checkoutCart } from "../checkout/checkout";
 import { ApplicationError } from "../common/errors/application-error";
-import { clone, createOrderId, findOrderById, idempotencyRecords, orders } from "./orders.store";
-import { Currency, Order, CreateOrderRequest, OrderStatus } from "./orders.types";
-import { findProductById } from "../products/products.store";
+import dataSource from "../data-source";
+import { Order as OrderEntity } from "../entities/order.entity";
 import { canonicalize } from "../utils/canonicalize";
+import { clone, idempotencyRecords } from "./orders.store";
+import { Currency, Order, CreateOrderRequest, OrderStatus } from "./orders.types";
 
 @Injectable()
-export class OrdersService {
-  getById(id: string): Order {
-    const order = findOrderById(id);
-    if (!order) {
-      throw new ApplicationError(404, "Order not found", `Order '${id}' does not exist.`, "order-not-found");
+export class OrdersService implements OnModuleInit, OnModuleDestroy {
+  async onModuleInit() {
+    if (!dataSource.isInitialized) {
+      await dataSource.initialize();
     }
-    return order;
   }
 
-  create(body: CreateOrderRequest, idempotencyKey: string): { order: Order; location: string; replay: boolean } {
+  async onModuleDestroy() {
+    if (dataSource.isInitialized) {
+      await dataSource.destroy();
+    }
+  }
+
+  async getById(id: string): Promise<Order> {
+    const entity = await dataSource.getRepository(OrderEntity).findOne({
+      where: { id },
+      relations: { items: { product: true } },
+    });
+    if (!entity) {
+      throw new ApplicationError(404, "Order not found", `Order '${id}' does not exist.`, "order-not-found");
+    }
+    return this.toHttpOrder(entity);
+  }
+
+  async create(
+    body: CreateOrderRequest,
+    idempotencyKey: string,
+  ): Promise<{ order: Order; location: string; replay: boolean }> {
     const fingerprint = canonicalize(body);
     const previous = idempotencyRecords.get(idempotencyKey);
 
@@ -36,110 +57,61 @@ export class OrdersService {
       };
     }
 
-    const requestedByProduct = new Map();
-    for (const item of body.items) {
-      requestedByProduct.set(item.product_id, (requestedByProduct.get(item.product_id) ?? 0) + item.quantity);
-    }
-
-    for (const [productId, quantity] of requestedByProduct) {
-      const product = findProductById(productId);
-      if (!product || product.status !== "active") {
-        throw new ApplicationError(
-          422,
-          "Product unavailable",
-          `Product '${productId}' is not available for ordering.`,
-          "product-unavailable",
-        );
-      }
-      if (quantity === 0) {
-        throw new ApplicationError(
-          422,
-          "Invalid quantity",
-          `Product '${productId}' has an invalid quantity.`,
-          "invalid-quantity",
-        );
-      }
-      if (product.stock_qty < quantity) {
-        throw new ApplicationError(
-          422,
-          "Insufficient stock",
-          `Product '${productId}' has insufficient stock.`,
-          "insufficient-stock",
-        );
-      }
-    }
-
-    const orderItems = body.items.map((requestedItem) => {
-      const product = findProductById(requestedItem.product_id);
-      if (!product) {
-        throw new ApplicationError(
-          404,
-          "Product not found",
-          `Product '${requestedItem.product_id}' does not exist.`,
-          "product-not-found",
-        );
-      }
-
-      const lineTotal = product.price_cents * requestedItem.quantity;
-
-      return {
-        product_id: product.id,
-        product_name: product.name,
-        quantity: requestedItem.quantity,
-        unit_price_cents: product.price_cents,
-        line_total_cents: lineTotal,
-      };
-    });
-
-    const totalCents = orderItems.reduce((total, item) => total + item.line_total_cents, 0);
-
-    if (!Number.isSafeInteger(totalCents)) {
+    if (!idempotencyKey?.trim()) {
       throw new ApplicationError(
-        422,
-        "Order total is too large",
-        "The order total exceeds the supported monetary range.",
-        "order-total-too-large",
+        400,
+        "Missing Idempotency-Key",
+        "Header Idempotency-Key is required to create an order.",
+        "missing-idempotency-key",
       );
     }
 
-    for (const [productId, quantity] of requestedByProduct) {
-      const product = findProductById(productId);
+    const { orderId } = await checkoutCart({
+      buyerId: body.buyer_id,
+      items: body.items.map((item) => ({
+        productId: item.product_id,
+        qty: item.quantity,
+      })),
+    });
 
-      if (!product) {
-        throw new ApplicationError(
-          404,
-          "Product not found",
-          `Product '${productId}' does not exist.`,
-          "product-not-found",
-        );
-      }
+    const entity = await dataSource.getRepository(OrderEntity).findOneOrFail({
+      where: { id: orderId },
+      relations: { items: { product: true } },
+    });
+    const order = this.toHttpOrder(entity);
+    const location = `/orders/${order.id}`;
 
-      product.stock_qty -= quantity;
-      product.updated_at = new Date().toISOString();
-    }
-
-    const newOrder: Order = {
-      id: createOrderId(),
-      status: OrderStatus.Placed,
-      currency: Currency.USD,
-      items: orderItems,
-      total_cents: totalCents,
-      created_at: new Date().toISOString(),
-    };
-
-    const location = `/orders/${newOrder.id}`;
-    orders.set(newOrder.id, newOrder);
     idempotencyRecords.set(idempotencyKey, {
       fingerprint,
       status: 201,
       location,
-      body: clone(newOrder),
+      body: clone(order),
     });
 
+    return { order, location, replay: false };
+  }
+
+  private toHttpOrder(entity: OrderEntity): Order {
+    const currency = entity.currency === "EUR" ? Currency.EUR : entity.currency === "UAH" ? Currency.UAH : Currency.USD;
+
     return {
-      order: newOrder,
-      location,
-      replay: false,
+      id: String(entity.id),
+      status:
+        entity.status === "pending"
+          ? OrderStatus.Pending
+          : entity.status === "cancelled"
+            ? OrderStatus.Cancelled
+            : OrderStatus.Placed,
+      currency,
+      items: (entity.items ?? []).map((item) => ({
+        product_id: String(item.product.id),
+        product_name: item.productName,
+        quantity: item.quantity,
+        unit_price_cents: item.unitPriceCents,
+        line_total_cents: item.lineTotalCents,
+      })),
+      total_cents: entity.totalAmountCents,
+      created_at: entity.createdAt.toISOString(),
     };
   }
 }

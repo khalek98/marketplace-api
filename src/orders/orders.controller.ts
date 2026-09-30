@@ -14,12 +14,12 @@ export class OrdersController {
 
   @Post()
   @HttpCode(201)
-  create(
+  async create(
     @Headers("Idempotency-Key") idempotencyKey: string,
     @Body() body: CreateOrderRequest,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = this.ordersService.create(body, idempotencyKey);
+    const result = await this.ordersService.create(body, idempotencyKey);
     res.setHeader("Location", result.location);
 
     if (result.replay) {

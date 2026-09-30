@@ -351,8 +351,12 @@ components:
       type: object
       additionalProperties: false
       required:
+        - buyer_id
         - items
       properties:
+        buyer_id:
+          $ref: "#/components/schemas/ResourceId"
+          description: Buyer user id (SQL `users.id`); wallet is debited in the same checkout transaction.
         items:
           type: array
           minItems: 1

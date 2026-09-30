@@ -131,7 +131,7 @@ cp secrets/db_auth.example secrets/db_auth
 
 ## Postgres (локальний стенд)
 
-Compose піднімає **лише** Postgres. Дев-креденшели — у `docker-compose.yml` (user `admin`, база `shop`, порт хоста **21110**). Ролі застосунку (`app_user_a` / `app_user_b`) створює `init.sql` на first boot (`CONNECT` + `CREATE` на `public`).
+Compose піднімає Postgres (**21110**) і PgBouncer перед ним (**21111**). Застосунок і ORM-скрипти ходять у **21111**; `21110` — прямий Postgres для admin/`psql`/debug. Дев-креденшели — у `docker-compose.yml` (user `admin`, база `shop`). Ролі застосунку (`app_user_a` / `app_user_b`) створює `init.sql` на first boot (`CONNECT` + `CREATE` на `public`).
 
 Два шляхи bootstrap — **не змішуй** на одній чистій БД:
 
@@ -149,7 +149,7 @@ cp secrets/db_auth.example secrets/db_auth
 docker compose up -d --wait
 
 export SKIP_VAULT=1
-export DB_HOST=127.0.0.1 DB_PORT=21110 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
+export DB_HOST=127.0.0.1 DB_PORT=21111 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
 
 npm run build
 npm run migrate
@@ -157,7 +157,7 @@ npm run migrate:show   # усі міграції з [X]
 npm run seed
 ```
 
-`npm run migrate` / `seed` / `demo:*` завжди йдуть через `scripts/with-secrets.sh`. Без `SKIP_VAULT=1` CLI лізе на Infisical (**порт 21150**). Локально для стенда без vault — завжди цей export + `DB_*` (як у [Grading](#grading)).
+`npm run migrate` / `seed` / `demo:*` завжди йдуть через `scripts/with-secrets.sh`. Без `SKIP_VAULT=1` CLI лізе на Infisical (**порт 21150**). Локально для стенда без vault — завжди цей export + `DB_*` (як у [Grading](#grading)). `DB_PORT` / порт у `DB_URL` — **PgBouncer (`21111`)**, не прямий Postgres.
 
 **Підключитись як admin:**
 
@@ -257,19 +257,75 @@ SELECT count(*) FROM order_items;  -- 20
 
 ## Конкурентність
 
-Checkout (`src/checkout/checkout.ts`) — одна транзакція: атомарний `UPDATE … RETURNING` для `stock_qty` і `wallets.balance_cents`, потім INSERT `orders` / `order_items` / `jobs`. Якщо stock або баланс недостатні — ROLLBACK усієї операції (немає orphan-замовлень).
+Checkout (`src/checkout/checkout.ts`) — одна транзакція: атомарний `UPDATE … RETURNING` для `stock_qty` і `wallets.balance_cents`, потім INSERT `orders` / `order_items` / `jobs`. Якщо stock або баланс недостатні — `ApplicationError` (`insufficient-stock` / `insufficient-funds`) і ROLLBACK усієї операції (немає orphan-замовлень). HTTP `POST /orders` викликає той самий `checkoutCart` (потрібен `buyer_id` у тілі).
 
 **Чому atomic UPDATE + RETURNING, а не `SELECT … FOR UPDATE`:** умова `stock_qty >= :qty` у тому ж `UPDATE` одночасно перевіряє наявність і блокує рядок; 0 рядків у `RETURNING` = товару немає. Немає вікна між «прочитав stock у JS» і «записав нове значення». Для балансу — той самий патерн. `FOR UPDATE` теж валідний, але тут достатньо одного round-trip на ресурс.
 
-**Retry лише `40001` / `40P01`:** під `REPEATABLE READ` / `SERIALIZABLE` Postgres може відповісти «повтори транзакцію цілком» (serialization failure / deadlock). Це не бізнес-відмова (немає товару / коштів) і не unique/check (`23505` / `23514`) — ті не зникнуть від повтору. Обгортка `src/checkout/with-retry.ts` ловить тільки ці два SQLSTATE, з backoff+jitter, і перезапускає **усю** транзакцію (включно з читаннями). Checkout (`checkout()`) теж обгорнутий у `withRetry` — на випадок deadlock (`40P01`), якщо порядок локів коли-небудь розʼїдеться; `InsufficientStock` / `InsufficientFunds` не ретраяться.
+**Retry лише `40001` / `40P01`:** під `REPEATABLE READ` / `SERIALIZABLE` Postgres може відповісти «повтори транзакцію цілком» (serialization failure / deadlock). Це не бізнес-відмова (немає товару / коштів) і не unique/check (`23505` / `23514`) — ті не зникнуть від повтору. Обгортка `src/checkout/with-retry.ts` ловить тільки ці два SQLSTATE, з backoff+jitter, і перезапускає **усю** транзакцію (включно з читаннями). Checkout теж обгорнутий у `withRetry` — на випадок deadlock (`40P01`); `ApplicationError` бізнес-відмов не ретраяться.
 
-| Демо           | Команда                | Очікуваний результат (локальний прогін)                  |
-| -------------- | ---------------------- | -------------------------------------------------------- |
-| Гонка checkout | `npm run demo:race`    | 200 спроб → **10** успішних, stock=0, відʼємних рядків=0 |
-| Воркери        | `npm run demo:workers` | ≥2 воркери, **оброблено двічі: 0**, час < N×work_ms      |
-| Retry          | `npm run demo:retry`   | ≥1 лог `40001` (або `40P01`) + retry; баланс сходиться   |
+| Демо           | Команда                | Результат прогону (grader / локально)                                               |
+| -------------- | ---------------------- | ----------------------------------------------------------------------------------- |
+| Гонка checkout | `npm run demo:race`    | 200 спроб → **10** успішних, stock=0, відʼємних рядків=0                            |
+| Воркери        | `npm run demo:workers` | 4 воркери, розподіл 3/3/3/3, **оброблено двічі: 0**, час **320 мс** (bound 1200 мс) |
+| Retry          | `npm run demo:retry`   | **1** спійманий `40001` + retry; фінальний баланс **1020**                          |
 
-`demo:race` сам скидає stock «Race Test» на 10 і піднімає баланси покупців перед `Promise.all` — можна ганяти повторно без ручного SQL. Перед першим прогоном потрібні migrate + seed.
+`demo:race` сам скидає stock «Race Test» на 10 і піднімає баланси покупців перед `Promise.all` — можна ганяти повторно без ручного SQL. Перед першим прогоном потрібні migrate + seed. Час воркерів на іншій машині може трохи плавати (локально інколи ~400 мс), інваріанти — `двічі=0` і час < послідовного bound.
+
+## Data layer ops
+
+### Підняти стек
+
+```bash
+cp secrets/db_auth.example secrets/db_auth   # після down -v / ротації
+docker compose up -d --wait
+```
+
+- Postgres (admin / debug): `127.0.0.1:21110`
+- PgBouncer (app + ORM scripts): `127.0.0.1:21111`
+
+Перевірка через bouncer:
+
+```bash
+PGPASSWORD=app-v1-password psql -h 127.0.0.1 -p 21111 -U app_user_a -d shop -c "SELECT 1"
+PGPASSWORD=app-v1-password psql -h 127.0.0.1 -p 21111 -U app_user_a -d pgbouncer -c "SHOW POOLS"
+```
+
+### Чому `pool_mode = transaction`
+
+Клієнт тримає конект до PgBouncer; справжній backend Postgres видається **лише на час транзакції**, потім повертається в пул (`default_pool_size = 5`). Так багато інстансів app не вичерпують `max_connections` Postgres.
+
+У transaction mode між транзакціями **не** виживає сесійний стан. Зокрема ламаються:
+
+1. **Іменовані prepared statements** (без трекінгу) — у нас `max_prepared_statements = 200` у `pgbouncer/pgbouncer.ini`, щоб TypeORM/`node-pg` працювали.
+2. **`LISTEN` / `NOTIFY`** — підписка прив’язана до backend-сесії, яка може змінитись після `COMMIT`.
+3. **Session advisory locks** — лок лишається на одному `pg_backend_pid()`, а наступний запит клієнта може піти на інший backend.
+4. (також) `SET` поза транзакцією, курсори `WITH HOLD`, тимчасові таблиці на сесію.
+
+Для checkout / `SKIP LOCKED` у **межах однієї транзакції** це ок.
+
+### Бекап
+
+Logical dump у `backups/` (тека в `.gitignore`):
+
+```bash
+export SKIP_VAULT=1
+export DB_HOST=127.0.0.1 DB_PORT=21111 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
+bash scripts/with-secrets.sh dev bash scripts/backup.sh
+# → друкує шлях, напр. …/backups/shop-2026-09-30.dump
+```
+
+Розклад (шаблон): `backup.cron` — щоночі о 03:00; підстав свій абсолютний шлях до репо в crontab.
+
+### Відновлення (restore-drill)
+
+Доводить, що останній дамп піднімається в **чистий** volume і сходиться контрольна сума по `orders`:
+
+```bash
+bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh
+# очікувано: MATCH (exit 0); скрипт сам створює і прибирає сервіс profile drill
+```
+
+Протокол останнього прогону з RTO/RPO: [`RESTORE-DRILL.md`](./RESTORE-DRILL.md).
 
 ## Grading
 
@@ -277,11 +333,20 @@ Checkout (`src/checkout/checkout.ts`) — одна транзакція: ато�
 
 ```bash
 docker compose up -d --wait
-export DB_HOST=127.0.0.1 DB_PORT=21110 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
+export DB_HOST=127.0.0.1 DB_PORT=21111 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
 export SKIP_VAULT=1    # у грейдера немає доступу до сховища
 ```
 
-Далі: `npm ci && npx tsc --noEmit`, `npm run build && npm run migrate && npm run migrate:show`, `npm run migrate:revert && npm run migrate`, `npm run seed && npm run seed`, `npm run demo:nplus1`, `npm run report`, `npm run demo:race`, `npm run demo:workers`, `npm run demo:retry`.
+`DB_PORT=21111` — опублікований порт **PgBouncer** (прямий Postgres лишається на `21110`).
+
+Далі (ORM / concurrency): `npm ci && npx tsc --noEmit`, `npm run build && npm run migrate && npm run migrate:show`, `npm run migrate:revert && npm run migrate`, `npm run seed && npm run seed`, `npm run demo:nplus1`, `npm run report`, `npm run demo:race`, `npm run demo:workers`, `npm run demo:retry`.
+
+Бекап і restore-drill (після того як у БД є дані — хоча б після `seed`):
+
+```bash
+bash scripts/with-secrets.sh dev bash scripts/backup.sh
+bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh
+```
 
 ## Optional: Infisical
 
@@ -308,7 +373,7 @@ npm i -g @infisical/cli
 ```
 
 1. Підніми Postgres застосунку (як у основному запуску): `secrets/db_auth` + `docker compose up -d --wait`.
-2. Підніми Infisical (окремий compose, порт **21150**; не плутати з Postgres Nest **21110**):
+2. Підніми Infisical (окремий compose, порт **21150**; не плутати з PgBouncer Nest **21111** / прямим Postgres **21110**):
 
 ```bash
 bash infisical/up.sh
