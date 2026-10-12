@@ -263,13 +263,13 @@ Checkout (`src/checkout/checkout.ts`) — одна транзакція: ато�
 
 **Retry лише `40001` / `40P01`:** під `REPEATABLE READ` / `SERIALIZABLE` Postgres може відповісти «повтори транзакцію цілком» (serialization failure / deadlock). Це не бізнес-відмова (немає товару / коштів) і не unique/check (`23505` / `23514`) — ті не зникнуть від повтору. Обгортка `src/checkout/with-retry.ts` ловить тільки ці два SQLSTATE, з backoff+jitter, і перезапускає **усю** транзакцію (включно з читаннями). Checkout теж обгорнутий у `withRetry` — на випадок deadlock (`40P01`); `ApplicationError` бізнес-відмов не ретраяться.
 
-| Демо           | Команда                | Результат прогону (grader / локально)                                               |
+| Демо           | Команда                | Чистий прогін (після `down -v`, migrate, seed)                                      |
 | -------------- | ---------------------- | ----------------------------------------------------------------------------------- |
 | Гонка checkout | `npm run demo:race`    | 200 спроб → **10** успішних, stock=0, відʼємних рядків=0                            |
-| Воркери        | `npm run demo:workers` | 4 воркери, розподіл 3/3/3/3, **оброблено двічі: 0**, час **320 мс** (bound 1200 мс) |
-| Retry          | `npm run demo:retry`   | **1** спійманий `40001` + retry; фінальний баланс **1020**                          |
+| Воркери        | `npm run demo:workers` | 4 воркери, розподіл 3/3/3/3, **оброблено двічі: 0**, **320 мс** проти **1200 мс** послідовно |
+| Retry          | `npm run demo:retry`   | **1** спійманий `40001`, фінальний баланс **1020**                                  |
 
-`demo:race` сам скидає stock «Race Test» на 10 і піднімає баланси покупців перед `Promise.all` — можна ганяти повторно без ручного SQL. Перед першим прогоном потрібні migrate + seed. Час воркерів на іншій машині може трохи плавати (локально інколи ~400 мс), інваріанти — `двічі=0` і час < послідовного bound.
+Числа в таблиці — з того чистого прогону: 200 спроб, 10 успішних, stock 0; воркери 320 мс проти 1200 мс послідовно; один спійманий `40001`, фінал 1020. `demo:race` сам скидає stock «Race Test» на 10 і піднімає баланси покупців перед `Promise.all` — можна ганяти повторно без ручного SQL. Перед першим прогоном потрібні migrate + seed. На іншій машині час воркерів може відрізнятись; інваріанти ті самі: успішних рівно 10, stock 0, двічі = 0.
 
 ## Data layer ops
 
@@ -305,11 +305,11 @@ PGPASSWORD=app-v1-password psql -h 127.0.0.1 -p 21111 -U app_user_a -d pgbouncer
 
 ### Бекап
 
-Logical dump у `backups/` (тека в `.gitignore`):
+Logical dump у `backups/` (тека в `.gitignore`). `pg_dump` підключається на `DB_HOST`:`DB_PORT` з оточення (клієнт — образ `postgres:16` зі стека, бо хостовий `pg_dump` часто старіший за сервер). Це **прямий Postgres `21110`**, не PgBouncer: `pool_mode = transaction` не тримає сесію, яку потребує дамп.
 
 ```bash
 export SKIP_VAULT=1
-export DB_HOST=127.0.0.1 DB_PORT=21111 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
+export DB_HOST=127.0.0.1 DB_PORT=21110 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
 bash scripts/with-secrets.sh dev bash scripts/backup.sh
 # → друкує шлях, напр. …/backups/shop-2026-09-30.dump
 ```
@@ -341,9 +341,10 @@ export SKIP_VAULT=1    # у грейдера немає доступу до сх
 
 Далі (ORM / concurrency): `npm ci && npx tsc --noEmit`, `npm run build && npm run migrate && npm run migrate:show`, `npm run migrate:revert && npm run migrate`, `npm run seed && npm run seed`, `npm run demo:nplus1`, `npm run report`, `npm run demo:race`, `npm run demo:workers`, `npm run demo:retry`.
 
-Бекап і restore-drill (після того як у БД є дані — хоча б після `seed`):
+Бекап і restore-drill (після того як у БД є дані — хоча б після `seed`). Дамп іде на прямий Postgres, не на порт застосунку:
 
 ```bash
+export DB_HOST=127.0.0.1 DB_PORT=21110 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
 bash scripts/with-secrets.sh dev bash scripts/backup.sh
 bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh
 ```
