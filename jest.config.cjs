@@ -4,6 +4,7 @@ module.exports = {
   testEnvironment: "node",
   roots: ["<rootDir>/test"],
   testMatch: ["**/*.test.ts"],
+  testPathIgnorePatterns: ["/node_modules/", "/test/integration/", "/test/e2e/", "/test/contract/"],
   moduleFileExtensions: ["ts", "js", "json"],
   transform: {
     "^.+\\.tsx?$": [
@@ -14,4 +15,6 @@ module.exports = {
       },
     ],
   },
+  // Jest 30 otherwise may pick the compact `agent` reporter and hide PASS lines.
+  reporters: ["default"],
 };
