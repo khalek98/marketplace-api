@@ -3,6 +3,7 @@ dist/
 spec.json
 course-materials/
 backups/
+pacts/
 
 .env
 secrets/*

@@ -13,6 +13,8 @@
     "test": "jest --runInBand",
     "test:integration": "jest --config jest.config.integration.cjs --runInBand",
     "test:e2e": "jest --config jest.config.e2e.cjs --runInBand",
+    "test:contract": "jest --config jest.config.contract.cjs --runInBand",
+    "verify:provider": "PACT_DO_NOT_TRACK=true jest --config jest.config.provider.cjs --runInBand",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check:env": "npm run build --silent && node scripts/check-env-example.mjs",
@@ -45,6 +47,7 @@
   "devDependencies": {
     "@nestjs/cli": "^11.0.24",
     "@nestjs/testing": "^11.2.3",
+    "@pact-foundation/pact": "^17.1.4",
     "@redocly/cli": "2.46.0",
     "@testcontainers/postgresql": "^12.2.0",
     "@types/express": "^5.0.6",
