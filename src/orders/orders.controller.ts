@@ -1,6 +1,6 @@
-import { Controller, Get, Param, Post, Body, Res, HttpCode, Headers } from "@nestjs/common";
+import { Controller, Get, Param, Patch, Post, Body, Res, HttpCode, Headers } from "@nestjs/common";
 import { OrdersService } from "./orders.service";
-import { CreateOrderRequest } from "./orders.types";
+import { CreateOrderRequest, UpdateOrderStatusRequest } from "./orders.types";
 import { Response } from "express";
 
 @Controller("orders")
@@ -10,6 +10,11 @@ export class OrdersController {
   @Get(":orderId")
   getById(@Param("orderId") orderId: string) {
     return this.ordersService.getById(orderId);
+  }
+
+  @Patch(":orderId")
+  changeStatus(@Param("orderId") orderId: string, @Body() body: UpdateOrderStatusRequest) {
+    return this.ordersService.changeStatus(orderId, body.status);
   }
 
   @Post()

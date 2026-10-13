@@ -8,6 +8,27 @@ import { canonicalize } from "../utils/canonicalize";
 import { clone, idempotencyRecords } from "./orders.store";
 import { Currency, Order, CreateOrderRequest, OrderStatus } from "./orders.types";
 
+const HTTP_STATUS: Record<OrderEntity["status"], OrderStatus> = {
+  pending: OrderStatus.Pending,
+  placed: OrderStatus.Placed,
+  packed: OrderStatus.Packed,
+  shipped: OrderStatus.Shipped,
+  out_for_delivery: OrderStatus.OutForDelivery,
+  delivered: OrderStatus.Delivered,
+  cancelled: OrderStatus.Cancelled,
+};
+
+/** Legal next statuses. Checkout inserts `placed`; `pending` stays for seed rows only. */
+const NEXT_STATUS: Record<OrderEntity["status"], readonly OrderEntity["status"][]> = {
+  pending: [],
+  placed: ["packed", "cancelled"],
+  packed: ["shipped", "cancelled"],
+  shipped: ["out_for_delivery"],
+  out_for_delivery: ["delivered"],
+  delivered: [],
+  cancelled: [],
+};
+
 @Injectable()
 export class OrdersService implements OnModuleInit, OnModuleDestroy {
   async onModuleInit() {
@@ -91,17 +112,45 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     return { order, location, replay: false };
   }
 
+  async changeStatus(id: string, next: OrderStatus): Promise<Order> {
+    const repo = dataSource.getRepository(OrderEntity);
+    const entity = await repo.findOne({
+      where: { id },
+      relations: { items: { product: true } },
+    });
+    if (!entity) {
+      throw new ApplicationError(404, "Order not found", `Order '${id}' does not exist.`, "order-not-found");
+    }
+
+    if (!(NEXT_STATUS[entity.status] as readonly string[]).includes(next)) {
+      throw new ApplicationError(
+        409,
+        "Invalid status transition",
+        `Order '${id}' cannot move from '${entity.status}' to '${next}'.`,
+        "invalid-status-transition",
+      );
+    }
+
+    const updated = await repo.update({ id, status: entity.status }, { status: next });
+    if (!updated.affected) {
+      throw new ApplicationError(
+        409,
+        "Invalid status transition",
+        `Order '${id}' cannot move from '${entity.status}' to '${next}'.`,
+        "invalid-status-transition",
+      );
+    }
+
+    entity.status = next;
+    return this.toHttpOrder(entity);
+  }
+
   private toHttpOrder(entity: OrderEntity): Order {
     const currency = entity.currency === "EUR" ? Currency.EUR : entity.currency === "UAH" ? Currency.UAH : Currency.USD;
 
     return {
       id: String(entity.id),
-      status:
-        entity.status === "pending"
-          ? OrderStatus.Pending
-          : entity.status === "cancelled"
-            ? OrderStatus.Cancelled
-            : OrderStatus.Placed,
+      status: HTTP_STATUS[entity.status],
       currency,
       items: (entity.items ?? []).map((item) => ({
         product_id: String(item.product.id),
