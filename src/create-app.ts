@@ -19,9 +19,9 @@ export function configureApp(app: INestApplication): INestApplication {
       apiSpec: resolve(process.cwd(), "openapi/openapi.yaml"),
       validateRequests: true,
       validateResponses: true,
-      // Outside the OpenAPI contract: ops probes, and the Engine.IO handshake on /socket.io/.
-      // The validator treats every other path as part of the spec (servers.url is "/") and answers 404.
-      ignorePaths: /^\/(health|db)$|^\/socket\.io(?:\/|$)/,
+      // Ops probes and the Engine.IO handshake are not in the spec.
+      // The SSE stream never ends, so response validation would buffer it forever.
+      ignorePaths: /^\/(health|db)$|^\/socket\.io(?:\/|$)|^\/orders\/[^/]+\/events$/,
     }),
   );
 

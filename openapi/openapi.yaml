@@ -204,6 +204,35 @@ paths:
         "500":
           $ref: "#/components/responses/InternalServerError"
 
+  /orders/{orderId}/events:
+    parameters:
+      - $ref: "#/components/parameters/OrderId"
+    get:
+      tags:
+        - Orders
+      operationId: streamOrderStatus
+      summary: Stream order status changes
+      description: >
+        Server-sent events for one order. Each event has id, event, and data.
+        A client that reconnects with Last-Event-ID receives only later events.
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: An open text/event-stream of order status changes.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
 components:
   parameters:
     PageLimit:
