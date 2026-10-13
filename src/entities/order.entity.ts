@@ -14,7 +14,10 @@ import { OrderItem } from "./order-item.entity";
 import { User } from "./user.entity";
 
 @Entity("orders")
-@Check(`"status" IN ('pending', 'placed', 'cancelled')`)
+@Check(
+  "CHK_orders_status",
+  `"status" IN ('pending', 'placed', 'packed', 'shipped', 'out_for_delivery', 'delivered', 'cancelled')`,
+)
 @Check(`"currency" IN ('USD', 'EUR', 'UAH')`)
 @Check(`"total_amount_cents" >= 0`)
 @Index("idx_orders_pending_created", ["createdAt"], { where: `"status" = 'pending'` })
@@ -29,7 +32,7 @@ export class Order {
   buyer!: User;
 
   @Column({ type: "text" })
-  status!: "pending" | "placed" | "cancelled";
+  status!: "pending" | "placed" | "packed" | "shipped" | "out_for_delivery" | "delivered" | "cancelled";
 
   @Column({ type: "text", default: "USD" })
   currency!: "USD" | "EUR" | "UAH";

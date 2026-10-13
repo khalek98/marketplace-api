@@ -52,6 +52,19 @@ User stories:
 - **Секрети через** `process.env` **+ zod** — Nest не знає про Infisical/Vault; хто завгодно може подати змінні (`.env`, Infisical, cloud SM, K8s). Креденшели Postgres — окремо у файлі `secrets/db_auth` (ротація без рестарту, alternating users).
 - **Docker + Kubernetes** — Postgres локально в compose; Nest на хості через npm. Цільовий deploy — окремі процеси API й outbox worker у K8s.
 
+## Trade-offs: WebSocket vs SSE
+
+Для нотифікації «статус замовлення змінився» канал один і йде від сервера до клієнта. У проді для цієї стрічки я лишив би SSE: підписка — це сам `GET /orders/:id/events`, реконект і `Last-Event-ID` робить клієнт, окремий протокол не потрібен. Socket.io лишається там, де клієнт теж пише в той самий канал: `join` із перевіркою, що замовлення належить цьому покупцю, уже такий випадок, але для однієї стрічки статусів це зайве рукостискання.
+
+| Критерій                 | WebSocket (socket.io)                                                            | SSE                                                                        |
+| ------------------------ | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Напрям каналу            | клієнт і сервер в одному з'єднанні                                               | лише сервер → клієнт                                                       |
+| Реконект / відновлення   | клієнт перепідключається сам; пропущене дочитується з буфера після нового `join` | `EventSource` надсилає `Last-Event-ID`, сервер віддає події з більшим `id` |
+| Вимоги до інфраструктури | довге з'єднання; на кількох інстансах кімнати процесу не спільні                 | звичайний HTTP; проксі не повинен буферизувати `text/event-stream`         |
+| Ціна на подію            | короткий фрейм після рукостискання                                               | текстовий блок `id` / `event` / `data` на кожну подію                      |
+
+Кімната `orders:<id>` живе в пам'яті одного процесу: другий інстанс свою копію сокетів не бачить і `to(room)` туди не доставляє; це лікується `@socket.io/redis-adapter` (Pub/Sub між інстансами) і sticky sessions, поки транспорт socket.io ще починається з long-polling.
+
 ## Trade-offs
 
 - **Не мікросервіси на старті.** Спочатку один моноліт із чіткими межами модулів — простіше транзакції й деплой, ніж мережа сервісів, яку я ще не відпрацював на цьому домені.
@@ -90,6 +103,58 @@ API слухає на порту з `PORT` у `.env` (у `.env.example` — `300
 
 - `GET /health` — uptime процесу (без рестарту росте)
 - `GET /db` — пробний запит у Postgres через пул
+
+Короткий `npm start` вище — smoke після clone. Повний ORM-шлях і realtime — у [ORM bootstrap](#orm-bootstrap-з-нуля-без-infisical) і [Realtime](#realtime).
+
+## Realtime
+
+На чистій машині: стерти volume, підняти Postgres, накатити міграції й seed, потім слухати API. Демо саме створює два замовлення (покупці `3` і `4`, товар `1` — це id після свіжого seed) і міняє статус лише після ack на `join`.
+
+```bash
+docker compose down -v
+cp secrets/db_auth.example secrets/db_auth
+cp .env.example .env
+
+export SKIP_VAULT=1
+export DB_HOST=127.0.0.1 DB_PORT=21111 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
+
+docker compose up -d --wait
+npm ci
+npm run build
+npm run migrate
+npm run seed
+
+set -a && source .env && set +a
+npm start
+```
+
+`DB_PORT=21111` — PgBouncer. Прямий Postgres лишається на `21110`. У другому терміналі, коли в лозі є `listening on http://localhost:3000`:
+
+```bash
+node scripts/realtime-demo.mjs
+node scripts/realtime-demo.mjs --same-room
+```
+
+Перший прогін друкує `A_RECEIVED=1` і `B_RECEIVED=0`. Другий, з `--same-room`, друкує `B_RECEIVED=1`. Обидва завершуються з кодом 0.
+
+Той самий потік по HTTP, на новому замовленні покупця `3`:
+
+```bash
+ORDER=$(curl -sS -X POST http://localhost:3000/orders \
+  -H 'content-type: application/json' \
+  -H "Idempotency-Key: realtime-$RANDOM" \
+  -d '{"buyer_id":"3","items":[{"product_id":"1","quantity":1}]}')
+ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$ORDER")
+for s in packed shipped out_for_delivery delivered; do
+  curl -sS -o /dev/null -X PATCH "http://localhost:3000/orders/$ID" \
+    -H 'content-type: application/json' \
+    -d "{\"status\":\"$s\"}"
+done
+curl -sN --max-time 2 -D - -o /dev/null "http://localhost:3000/orders/$ID/events" | grep -i '^content-type'
+curl -sN --max-time 2 -H 'Last-Event-ID: 3' "http://localhost:3000/orders/$ID/events" | grep '^id:' | head -1
+```
+
+Перша команда показує `content-type: text/event-stream`. Друга — рядок `id:` із числом більше за 3.
 
 ## Configuration
 
@@ -440,6 +505,8 @@ export SKIP_VAULT=1    # у грейдера немає доступу до сх
 
 Далі (ORM / concurrency): `npm ci && npx tsc --noEmit`, `npm run build && npm run migrate && npm run migrate:show`, `npm run migrate:revert && npm run migrate`, `npm run seed && npm run seed`, `npm run demo:nplus1`, `npm run report`, `npm run demo:race`, `npm run demo:workers`, `npm run demo:retry`.
 
+Realtime — після `npm run build && npm run migrate && npm run seed`. У шелі API ще `set -a && source .env && set +a` і `npm start`. У другому терміналі: `node scripts/realtime-demo.mjs` і `node scripts/realtime-demo.mjs --same-room`. Потік `text/event-stream` і `Last-Event-ID` — у секції [Realtime](#realtime).
+
 Бекап і restore-drill (після того як у БД є дані — хоча б після `seed`). Дамп іде на прямий Postgres, не на порт застосунку:
 
 ```bash
@@ -529,4 +596,5 @@ docker compose -f infisical/docker-compose.yml down
 - **2026-09-21 (HW-13):** data layer на TypeORM: entities + міграції (`synchronize: false`), гроші в копійках (`integer`), схема для ORM з `npm run migrate`. `db/schema.sql` лишається стендом HW-12.
 - **2026-09-29:** README: розділено ORM bootstrap (`SKIP_VAULT` + migrate) і SQL-стенд HW-12; виправлено `psql -T` без `-c`/`-f`; зафіксовано, що TypeORM читає лише `dist/**/*.js`.
 - **2026-09-29 (HW-14):** transactional checkout (atomic UPDATE+RETURNING), таблиця `jobs` + `FOR UPDATE SKIP LOCKED`, retry лише `40001`/`40P01`; демо `demo:race|workers|retry`. Stock захищаємо атомарним UPDATE, не підняттям isolation до SERIALIZABLE.
+- **2026-10-13 (HW-18):** realtime на двох транспортах з однієї шини (`OrderEventsService`). Для стрічки статусу замовлення в проді лишаю SSE; socket.io — для `join`/кімнат, де клієнт теж пише в канал.
 - Наступні зміни архітектури додаються сюди з причиною та наслідками, а не приховуються переписуванням історії.
