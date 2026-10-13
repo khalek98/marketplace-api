@@ -263,11 +263,11 @@ Checkout (`src/checkout/checkout.ts`) — одна транзакція: ато�
 
 **Retry лише `40001` / `40P01`:** під `REPEATABLE READ` / `SERIALIZABLE` Postgres може відповісти «повтори транзакцію цілком» (serialization failure / deadlock). Це не бізнес-відмова (немає товару / коштів) і не unique/check (`23505` / `23514`) — ті не зникнуть від повтору. Обгортка `src/checkout/with-retry.ts` ловить тільки ці два SQLSTATE, з backoff+jitter, і перезапускає **усю** транзакцію (включно з читаннями). Checkout теж обгорнутий у `withRetry` — на випадок deadlock (`40P01`); `ApplicationError` бізнес-відмов не ретраяться.
 
-| Демо           | Команда                | Чистий прогін (після `down -v`, migrate, seed)                                      |
-| -------------- | ---------------------- | ----------------------------------------------------------------------------------- |
-| Гонка checkout | `npm run demo:race`    | 200 спроб → **10** успішних, stock=0, відʼємних рядків=0                            |
+| Демо           | Команда                | Чистий прогін (після `down -v`, migrate, seed)                                               |
+| -------------- | ---------------------- | -------------------------------------------------------------------------------------------- |
+| Гонка checkout | `npm run demo:race`    | 200 спроб → **10** успішних, stock=0, відʼємних рядків=0                                     |
 | Воркери        | `npm run demo:workers` | 4 воркери, розподіл 3/3/3/3, **оброблено двічі: 0**, **320 мс** проти **1200 мс** послідовно |
-| Retry          | `npm run demo:retry`   | **1** спійманий `40001`, фінальний баланс **1020**                                  |
+| Retry          | `npm run demo:retry`   | **1** спійманий `40001`, фінальний баланс **1020**                                           |
 
 Числа в таблиці — з того чистого прогону: 200 спроб, 10 успішних, stock 0; воркери 320 мс проти 1200 мс послідовно; один спійманий `40001`, фінал 1020. `demo:race` сам скидає stock «Race Test» на 10 і піднімає баланси покупців перед `Promise.all` — можна ганяти повторно без ручного SQL. Перед першим прогоном потрібні migrate + seed. На іншій машині час воркерів може відрізнятись; інваріанти ті самі: успішних рівно 10, stock 0, двічі = 0.
 
@@ -326,6 +326,105 @@ bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh
 ```
 
 Протокол останнього прогону з RTO/RPO: [`RESTORE-DRILL.md`](./RESTORE-DRILL.md).
+
+## Тестування
+
+Чотири команди (Docker потрібен для контейнерів тестів і для брокера):
+
+| Команда                    | Що перевіряє                                              |
+| -------------------------- | --------------------------------------------------------- |
+| `npm run test:integration` | TypeORM / SQL проти Postgres у testcontainers (≥6 тестів) |
+| `npm run test:e2e`         | Повний Nest через supertest (create → read + 404)         |
+| `npm run test:contract`    | Consumer Pact → файл `pacts/*.json`                       |
+| `npm run verify:provider`  | Справжній Nest відповідає контракту                       |
+
+`pacts/` у `.gitignore` — файл з’являється після `test:contract`.
+
+### Ізоляція integration / e2e
+
+Між тестами — `TRUNCATE … RESTART IDENTITY CASCADE` на таблицях даних (не на `migrations`). Не зовнішній `ROLLBACK`: `checkoutCart` сам відкриває `dataSource.transaction()` і робить `COMMIT` на іншому конекті з пула; тестовий `BEGIN` цей коміт не відкотить.
+
+### Pact Broker (порт 21120)
+
+Compose піднімає `pact-broker` + його Postgres (`broker-db`, назовні не публікується). Не плутати з Postgres `21110`, PgBouncer `21111`, Infisical `21150`.
+
+```bash
+docker compose up -d --wait
+# UI / API брокера: http://127.0.0.1:21120
+```
+
+`verify:provider` читає `PACT_BROKER_URL` і опційно `PACT_BROKER_TOKEN`. Без `PACT_BROKER_URL` — перевірка лише проти локального `pacts/*.json`. З `PACT_BROKER_URL=http://127.0.0.1:21120` — контракт з брокера + `publishVerificationResult`. Ці змінні **не** в `env.schema.ts` (Nest стартує без брокера).
+
+Два шляхи запуску verify:
+
+```bash
+# Зі сховищем (ключі PACT_BROKER_URL / PACT_BROKER_TOKEN лежать у Infisical env)
+bash scripts/with-secrets.sh dev npm run verify:provider
+
+# Без vault (локально або CI): значення вже в оточенні
+export SKIP_VAULT=1
+export PACT_BROKER_URL=http://127.0.0.1:21120
+# export PACT_BROKER_TOKEN=…   # якщо брокер вимагає токен
+npm run verify:provider
+```
+
+### Локальний can-i-deploy (обидва стани)
+
+Порядок важливий: спочатку publish контракту, потім verify з публікацією результату, і лише після цього тег `prod` на **версію провайдера** (ту саму, що `PROVIDER_VERSION` у Verifier). Тег на консюмера гейт не відкриває.
+
+```bash
+export PACT_BROKER_URL=http://127.0.0.1:21120
+export PROVIDER_VERSION=1.0.0
+export CONSUMER_VERSION=1.0.0
+
+npm run test:contract
+
+curl -s -o /dev/null -w '%{http_code}\n' -X PUT \
+  "$PACT_BROKER_URL/pacts/provider/marketplace-api/consumer/marketplace-web/version/$CONSUMER_VERSION" \
+  -H 'Content-Type: application/json' \
+  -d @pacts/marketplace-web-marketplace-api.json
+# → 201
+
+# До verify / до тега prod — деплоїти ще не можна:
+curl -s "$PACT_BROKER_URL/can-i-deploy?pacticipant=marketplace-web&version=$CONSUMER_VERSION&to=prod"
+```
+
+Живий `summary` після publish, **до** verify і тега `prod`:
+
+```json
+{
+  "deployable": null,
+  "reason": "There is no verified pact between version 1.0.0 of marketplace-web and the latest version of marketplace-api with tag prod (no such version exists)",
+  "success": 0,
+  "failed": 0,
+  "unknown": 1
+}
+```
+
+```bash
+npm run verify:provider
+
+curl -s -o /dev/null -w '%{http_code}\n' -X PUT \
+  "$PACT_BROKER_URL/pacticipants/marketplace-api/versions/$PROVIDER_VERSION/tags/prod" \
+  -H 'Content-Type: application/json'
+# → 201
+
+curl -s "$PACT_BROKER_URL/can-i-deploy?pacticipant=marketplace-web&version=$CONSUMER_VERSION&to=prod"
+```
+
+Живий `summary` після verify + тега `prod` на `marketplace-api@1.0.0`:
+
+```json
+{
+  "deployable": true,
+  "reason": "All required verification results are published and successful",
+  "success": 1,
+  "failed": 0,
+  "unknown": 0
+}
+```
+
+CI: `.github/workflows/contract.yml` — publish → verify → tag `prod` → `can-i-deploy`. Секрети джоби — GitHub secrets `PACT_BROKER_URL` / `PACT_BROKER_TOKEN` (для локального compose в Actions достатньо дефолту `http://127.0.0.1:21120`).
 
 ## Grading
 
