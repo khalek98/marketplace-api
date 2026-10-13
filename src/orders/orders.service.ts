@@ -5,6 +5,7 @@ import { ApplicationError } from "../common/errors/application-error";
 import dataSource from "../data-source";
 import { Order as OrderEntity } from "../entities/order.entity";
 import { canonicalize } from "../utils/canonicalize";
+import { OrderEventsService } from "./order-events.service";
 import { clone, idempotencyRecords } from "./orders.store";
 import { Currency, Order, CreateOrderRequest, OrderStatus } from "./orders.types";
 
@@ -31,6 +32,8 @@ const NEXT_STATUS: Record<OrderEntity["status"], readonly OrderEntity["status"][
 
 @Injectable()
 export class OrdersService implements OnModuleInit, OnModuleDestroy {
+  constructor(private readonly orderEvents: OrderEventsService) {}
+
   async onModuleInit() {
     if (!dataSource.isInitialized) {
       await dataSource.initialize();
@@ -142,6 +145,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     }
 
     entity.status = next;
+    this.orderEvents.publish(id, next);
     return this.toHttpOrder(entity);
   }
 
