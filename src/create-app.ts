@@ -19,8 +19,9 @@ export function configureApp(app: INestApplication): INestApplication {
       apiSpec: resolve(process.cwd(), "openapi/openapi.yaml"),
       validateRequests: true,
       validateResponses: true,
-      // Operational endpoints (uptime + DB probe for rotation) are outside the marketplace contract.
-      ignorePaths: /^\/(health|db)$/,
+      // Outside the OpenAPI contract: ops probes, and the Engine.IO handshake on /socket.io/.
+      // The validator treats every other path as part of the spec (servers.url is "/") and answers 404.
+      ignorePaths: /^\/(health|db)$|^\/socket\.io(?:\/|$)/,
     }),
   );
 
