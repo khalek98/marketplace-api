@@ -115,6 +115,14 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     return { order, location, replay: false };
   }
 
+  async ownsOrder(orderId: string, buyerId: string): Promise<boolean> {
+    const entity = await dataSource.getRepository(OrderEntity).findOne({
+      where: { id: orderId },
+      relations: { buyer: true },
+    });
+    return entity?.buyer?.id === buyerId;
+  }
+
   async changeStatus(id: string, next: OrderStatus): Promise<Order> {
     const repo = dataSource.getRepository(OrderEntity);
     const entity = await repo.findOne({
