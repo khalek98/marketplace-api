@@ -353,7 +353,7 @@ docker compose up -d --wait
 # UI / API брокера: http://127.0.0.1:21120
 ```
 
-`verify:provider` читає `PACT_BROKER_URL` і опційно `PACT_BROKER_TOKEN`. Без `PACT_BROKER_URL` — перевірка лише проти локального `pacts/*.json`. З `PACT_BROKER_URL=http://127.0.0.1:21120` — контракт з брокера + `publishVerificationResult`. Ці змінні **не** в `env.schema.ts` (Nest стартує без брокера).
+`verify:provider` читає `PACT_BROKER_URL` і опційно `PACT_BROKER_TOKEN`. Без `PACT_BROKER_URL` — перевірка лише проти локального `pacts/*.json`. З `PACT_BROKER_URL=http://127.0.0.1:21120` — контракт з брокера + `publishVerificationResult`. Якщо в шелі лишився старий `export PACT_BROKER_URL=…` після `docker compose down`, зніми його (`unset PACT_BROKER_URL`) або перевір локальний файл явно: `env -u PACT_BROKER_URL npm run verify:provider`. Ці змінні **не** в `env.schema.ts` (Nest стартує без брокера).
 
 Два шляхи запуску verify:
 
