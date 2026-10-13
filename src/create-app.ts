@@ -6,8 +6,8 @@ import * as OpenApiValidator from "express-openapi-validator";
 import { AppModule } from "./app.module";
 import { ProblemJsonFilter } from "./common/filters/problem-json.filter";
 
-export async function createApp(): Promise<INestApplication> {
-  const app = await NestFactory.create(AppModule, { bodyParser: false });
+/** Shared Nest wiring for main.ts and E2E — same filters/validator as production. */
+export function configureApp(app: INestApplication): INestApplication {
   app.enableShutdownHooks();
   app.useGlobalFilters(new ProblemJsonFilter());
 
@@ -25,4 +25,9 @@ export async function createApp(): Promise<INestApplication> {
   );
 
   return app;
+}
+
+export async function createApp(): Promise<INestApplication> {
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
+  return configureApp(app);
 }

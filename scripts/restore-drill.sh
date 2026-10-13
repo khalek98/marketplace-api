@@ -45,9 +45,23 @@ BEFORE="$(
 )"
 echo "orders before: $BEFORE  (count|sum(total_amount_cents))"
 
+# Volume key `pgdata-restore` is prefixed with the compose project
+# (`name:` in the file, or COMPOSE_PROJECT_NAME when that is set).
+COMPOSE_PROJECT="$(
+  docker compose config --format json | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>process.stdout.write(JSON.parse(s).name))'
+)"
+RESTORE_VOLUME="${COMPOSE_PROJECT}_pgdata-restore"
+
+# Install before the first drill container/volume, so a later abort still cleans up.
+cleanup() {
+  docker compose --profile drill rm -sf restore >/dev/null 2>&1 || true
+  docker volume rm -f "$RESTORE_VOLUME" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
 # Wipe previous drill so restore never hits a non-empty volume.
 docker compose --profile drill rm -sf restore >/dev/null 2>&1 || true
-docker volume rm -f marketplace_pgdata-restore >/dev/null 2>&1 || true
+docker volume rm -f "$RESTORE_VOLUME" >/dev/null 2>&1 || true
 
 docker compose --profile drill up -d --wait restore
 
@@ -75,13 +89,6 @@ AFTER="$(
 )"
 echo "orders after:  $AFTER"
 echo "restore wall:  $(secs "$RESTORE_MS") s"
-
-# Always tear down drill environment (success or fail after restore attempt).
-cleanup() {
-  docker compose --profile drill rm -sf restore >/dev/null 2>&1 || true
-  docker volume rm -f marketplace_pgdata-restore >/dev/null 2>&1 || true
-}
-trap cleanup EXIT
 
 if [ "$BEFORE" = "$AFTER" ]; then
   echo "MATCH"

@@ -1,0 +1,67 @@
+name: contract
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    env:
+      PROVIDER_VERSION: ${{ github.sha }}
+      CONSUMER_VERSION: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Generate pact (consumer)
+        run: npm run test:contract
+
+      - name: Start Pact Broker
+        run: docker compose up -d --wait broker-db pact-broker
+
+      - name: Publish pact to broker
+        env:
+          PACT_BROKER_URL: ${{ secrets.PACT_BROKER_URL }}
+        run: |
+          BROKER_URL="${PACT_BROKER_URL:-http://127.0.0.1:21120}"
+          curl -sf -X PUT \
+            "${BROKER_URL}/pacts/provider/marketplace-api/consumer/marketplace-web/version/${CONSUMER_VERSION}" \
+            -H 'Content-Type: application/json' \
+            -d @pacts/marketplace-web-marketplace-api.json
+
+      - name: Verify provider and publish result
+        env:
+          PACT_BROKER_URL: ${{ secrets.PACT_BROKER_URL }}
+          PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+          PROVIDER_VERSION: ${{ env.PROVIDER_VERSION }}
+        run: |
+          export PACT_BROKER_URL="${PACT_BROKER_URL:-http://127.0.0.1:21120}"
+          npm run verify:provider
+
+      - name: Tag provider version as prod
+        env:
+          PACT_BROKER_URL: ${{ secrets.PACT_BROKER_URL }}
+        run: |
+          BROKER_URL="${PACT_BROKER_URL:-http://127.0.0.1:21120}"
+          curl -sf -X PUT \
+            "${BROKER_URL}/pacticipants/marketplace-api/versions/${PROVIDER_VERSION}/tags/prod" \
+            -H 'Content-Type: application/json'
+
+      - name: can-i-deploy
+        env:
+          PACT_BROKER_URL: ${{ secrets.PACT_BROKER_URL }}
+        run: |
+          BROKER_URL="${PACT_BROKER_URL:-http://127.0.0.1:21120}"
+          body="$(curl -sf "${BROKER_URL}/can-i-deploy?pacticipant=marketplace-web&version=${CONSUMER_VERSION}&to=prod")"
+          echo "$body"
+          node -e 'const j=JSON.parse(process.argv[1]); if(j.summary?.deployable!==true){console.error(j.summary); process.exit(1)}' "$body"
