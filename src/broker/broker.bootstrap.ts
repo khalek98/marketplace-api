@@ -1,5 +1,6 @@
 import { Injectable, OnModuleInit } from "@nestjs/common";
 
+import { isBrokerEnabled } from "./broker-enabled";
 import { withChannel } from "./connect";
 import { declareTopology } from "./topology";
 
@@ -7,6 +8,7 @@ import { declareTopology } from "./topology";
 @Injectable()
 export class BrokerBootstrap implements OnModuleInit {
   async onModuleInit(): Promise<void> {
+    if (!isBrokerEnabled()) return;
     await withChannel(async (ch) => {
       await declareTopology(ch);
     });

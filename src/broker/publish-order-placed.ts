@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { isBrokerEnabled } from "./broker-enabled";
 import { withConfirmChannel } from "./connect";
 import { EXCHANGE, ROUTING_KEY } from "./names";
 
@@ -20,6 +21,10 @@ export async function publishOrderPlaced(input: { orderId: string; buyerId: stri
     orderId: input.orderId,
     buyerId: input.buyerId,
   };
+
+  if (!isBrokerEnabled()) {
+    return event;
+  }
 
   await withConfirmChannel(async (ch) => {
     const ok = ch.publish(EXCHANGE.events, ROUTING_KEY.orderPlaced, Buffer.from(JSON.stringify(event)), {
