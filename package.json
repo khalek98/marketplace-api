@@ -29,6 +29,7 @@
     "demo:workers": "bash scripts/with-secrets.sh dev node dist/demo-workers.js",
     "demo:retry": "bash scripts/with-secrets.sh dev node dist/demo-retry.js",
     "demo:publish": "bash scripts/with-secrets.sh dev node dist/demo-publish.js",
+    "demo:dlq": "bash scripts/with-secrets.sh dev node dist/demo-dlq.js",
     "report": "bash scripts/with-secrets.sh dev node dist/report.js"
   },
   "dependencies": {
