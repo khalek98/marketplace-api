@@ -22,6 +22,7 @@ export function applyNestTestEnv(): { authFile: string; cleanup(): void } {
 
   process.env.DB_URL = `postgres://${encodeURIComponent(user)}@${host}:${port}/${database}`;
   process.env.DB_AUTH_FILE = authFile;
+  process.env.BROKER_URL = process.env.BROKER_URL || "amqp://app:app@127.0.0.1:21130";
   process.env.PORT = process.env.PORT || "3000";
   process.env.CURSOR_HMAC_SECRET = process.env.CURSOR_HMAC_SECRET || "e2e-test-cursor-hmac-secret";
   process.env.LOG_LEVEL = process.env.LOG_LEVEL || "error";

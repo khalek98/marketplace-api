@@ -172,6 +172,7 @@ curl -sN --max-time 2 -H 'Last-Event-ID: 3' "http://localhost:3000/orders/$ID/ev
 | -------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `PORT`               | так                           | HTTP-порт API                                                                                                                                                                                   |
 | `DB_URL`             | так                           | host/port/db для пулу. **Джерело: сховище** (локально gitignored `.env`; optional Infisical). User/password з URL ігноруються — з `secrets/db_auth`. У git лише фейковий рядок у `.env.example` |
+| `BROKER_URL`         | так                           | AMQP-адреса RabbitMQ (`amqp://…:21130`). **Джерело: сховище** (той самий шлях, що й `DB_URL`). Порт `21131` — лише management UI, не цей URL                                                    |
 | `CURSOR_HMAC_SECRET` | так                           | HMAC для cursor пагінації (без дефолту в схемі — має прийти ззовні)                                                                                                                             |
 | `DB_AUTH_FILE`       | ні (дефолт `secrets/db_auth`) | Шлях до файла з role + password Postgres (два рядки)                                                                                                                                            |
 | `LOG_LEVEL`          | ні (`info`)                   | `debug` \| `info` \| `warn` \| `error`                                                                                                                                                          |
@@ -498,10 +499,11 @@ CI: `.github/workflows/contract.yml` — publish → verify → tag `prod` → `
 ```bash
 docker compose up -d --wait
 export DB_HOST=127.0.0.1 DB_PORT=21111 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
+export BROKER_URL=amqp://app:app@127.0.0.1:21130
 export SKIP_VAULT=1    # у грейдера немає доступу до сховища
 ```
 
-`DB_PORT=21111` — опублікований порт **PgBouncer** (прямий Postgres лишається на `21110`).
+`DB_PORT=21111` — опублікований порт **PgBouncer** (прямий Postgres лишається на `21110`). `BROKER_URL` — AMQP на `21130` (не management UI на `21131`).
 
 Далі (ORM / concurrency): `npm ci && npx tsc --noEmit`, `npm run build && npm run migrate && npm run migrate:show`, `npm run migrate:revert && npm run migrate`, `npm run seed && npm run seed`, `npm run demo:nplus1`, `npm run report`, `npm run demo:race`, `npm run demo:workers`, `npm run demo:retry`.
 
