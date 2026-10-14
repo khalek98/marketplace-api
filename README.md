@@ -87,7 +87,7 @@ User stories:
 
 ## Запуск
 
-Потрібен Node.js ≥ 22. `docker compose` піднімає **лише Postgres**; Nest — на хості через `npm`. Infisical для цього шляху не потрібен.
+Потрібен Node.js ≥ 22. `docker compose` піднімає Postgres, PgBouncer, RabbitMQ і (за потреби) Pact Broker; Nest — на хості через `npm`. Infisical для цього шляху не потрібен.
 
 ```bash
 cp .env.example .env
@@ -155,6 +155,47 @@ curl -sN --max-time 2 -H 'Last-Event-ID: 3' "http://localhost:3000/orders/$ID/ev
 ```
 
 Перша команда показує `content-type: text/event-stream`. Друга — рядок `id:` із числом більше за 3.
+
+## Async-події через RabbitMQ
+
+Realtime з попереднього розділу доставляє тому, хто **зараз** у кімнаті. Тут зʼявляється брокер: після `COMMIT` checkout публікується `order.placed` у topic-exchange `shop.events`, споживач пише рядок у `order_notifications` і лише тоді робить `ack`. AMQP — порт **21130**, management UI — **21131** (`app` / `app`).
+
+З нуля на іншій машині (після `cp secrets/db_auth.example secrets/db_auth` і `cp .env.example .env`; у `.env` підставай реальний `BROKER_URL` або експортуй його в shell):
+
+```bash
+docker compose down -v
+cp secrets/db_auth.example secrets/db_auth
+docker compose up -d --wait
+
+export SKIP_VAULT=1
+export DB_HOST=127.0.0.1 DB_PORT=21111 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
+export BROKER_URL=amqp://app:app@127.0.0.1:21130
+
+npm ci
+npm run build
+npm run migrate
+npm run seed
+
+npm run demo:publish
+npm run demo:dlq
+npm run demo:duplicate
+```
+
+Три прогони на цьому стенді (2026-10-14) дали однакові рядки:
+
+| Демо             | Результат                                                              |
+| ---------------- | ---------------------------------------------------------------------- |
+| `demo:publish`   | `published=5` `delivered=5` `effect=5` `acked=5` `dlq=0` `prefetch=20` |
+| `demo:dlq`       | `rejected=1` `work=0` `dlq=1` `dlq-reason=rejected` `effect=0`         |
+| `demo:duplicate` | `deliveries=2` `effect=1` `skipped=1`                                  |
+
+`prefetch=20`: споживач робить легкий `INSERT`, типово десятки мілісекунд. `20 × 50 мс ≈ 1 с`, стоковий `consumer_timeout` — 30 хв, тож вікно unacked далеко від таймауту. `prefetch=0` (дефолт брокера) — без ліміту; `1` серіалізував би легкі повідомлення без потреби.
+
+Дубль у `demo:duplicate` зроблено через `SIGKILL` дочірнього споживача **після** запису сповіщення і **до** `ack` (не через `channel.close()`). Друга доставка бачить той самий `eventId`; `INSERT … ON CONFLICT (event_id) DO NOTHING` не створює другий рядок.
+
+Це **at-least-once** доставка плюс ідемпотентний ефект у Postgres — разом вони дають exactly-once **результат**. Exactly-once **доставки** брокер не обіцяє: `ack` означає «я більше не вимагаю повтору», а не «дійшло один раз».
+
+Між `COMMIT` замовлення і `publish` процес може впасти — замовлення буде, події не буде (dual write). Це закриє transactional outbox пізніше. Дефолтний шлях dead-letter у RabbitMQ — at-most-once на репаблиш у DLX; для локальних демо цього достатньо. У проді для quorum мав би сенс LTS-образ **4.2.x**; тут **4.3.4-management**, щоб поведінка `reject` / `nack` збігалась із матеріалами лекції.
 
 ## Configuration
 
@@ -507,7 +548,9 @@ export SKIP_VAULT=1    # у грейдера немає доступу до сх
 
 Далі (ORM / concurrency): `npm ci && npx tsc --noEmit`, `npm run build && npm run migrate && npm run migrate:show`, `npm run migrate:revert && npm run migrate`, `npm run seed && npm run seed`, `npm run demo:nplus1`, `npm run report`, `npm run demo:race`, `npm run demo:workers`, `npm run demo:retry`.
 
-Realtime — після `npm run build && npm run migrate && npm run seed`. У шелі API ще `set -a && source .env && set +a` і `npm start`. У другому терміналі: `node scripts/realtime-demo.mjs` і `node scripts/realtime-demo.mjs --same-room`. Потік `text/event-stream` і `Last-Event-ID` — у секції [Realtime](#realtime).
+Async-події (RabbitMQ уже в `docker compose up -d --wait` вище): `npm run demo:publish`, `npm run demo:dlq`, `npm run demo:duplicate`. Числа й обґрунтування — у секції [Async-події через RabbitMQ](#async-події-через-rabbitmq).
+
+Realtime — після `npm run build && npm run migrate && npm run seed`. У шелі API ще `set -a && source .env && set +a` (або ті самі `export` + `BROKER_URL`) і `npm start`. У другому терміналі: `node scripts/realtime-demo.mjs` і `node scripts/realtime-demo.mjs --same-room`. Потік `text/event-stream` і `Last-Event-ID` — у секції [Realtime](#realtime).
 
 Бекап і restore-drill (після того як у БД є дані — хоча б після `seed`). Дамп іде на прямий Postgres, не на порт застосунку:
 
@@ -599,4 +642,5 @@ docker compose -f infisical/docker-compose.yml down
 - **2026-09-29:** README: розділено ORM bootstrap (`SKIP_VAULT` + migrate) і SQL-стенд HW-12; виправлено `psql -T` без `-c`/`-f`; зафіксовано, що TypeORM читає лише `dist/**/*.js`.
 - **2026-09-29 (HW-14):** transactional checkout (atomic UPDATE+RETURNING), таблиця `jobs` + `FOR UPDATE SKIP LOCKED`, retry лише `40001`/`40P01`; демо `demo:race|workers|retry`. Stock захищаємо атомарним UPDATE, не підняттям isolation до SERIALIZABLE.
 - **2026-10-13 (HW-18):** realtime на двох транспортах з однієї шини (`OrderEventsService`). Для стрічки статусу замовлення в проді лишаю SSE; socket.io — для `join`/кімнат, де клієнт теж пише в канал.
+- **2026-10-14 (HW-19):** async `order.placed` через RabbitMQ (topic `shop.events`, quorum + DLQ, ручний ack, `prefetch=20`, ідемпотентні `order_notifications`). Публікація після checkout COMMIT — dual write до outbox лишається відкритим.
 - Наступні зміни архітектури додаються сюди з причиною та наслідками, а не приховуються переписуванням історії.
