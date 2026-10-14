@@ -1,5 +1,6 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 
+import { publishOrderPlaced } from "../broker/publish-order-placed";
 import { checkoutCart } from "../checkout/checkout";
 import { ApplicationError } from "../common/errors/application-error";
 import dataSource from "../data-source";
@@ -97,6 +98,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         qty: item.quantity,
       })),
     });
+
+    // After COMMIT: broker is outside the Postgres transaction (dual-write gap until HW-22).
+    await publishOrderPlaced({ orderId, buyerId: body.buyer_id });
 
     const entity = await dataSource.getRepository(OrderEntity).findOneOrFail({
       where: { id: orderId },
