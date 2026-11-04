@@ -3,7 +3,7 @@
  * Self-clean; prints key=number for the grader.
  */
 import { createJobsRedis, closeRedis } from "./redis/clients";
-import { createSession, sessionExists, sessionKey, sessionTtl, touchSession } from "./sessions/session-store";
+import { createSession, sessionExists, sessionTtl, touchSession } from "./sessions/session-store";
 
 const SESSION_TTL_SEC = 5;
 const REQUESTS = 3;
@@ -58,10 +58,6 @@ async function main(): Promise<void> {
     line("sessions", sids.size);
     line("in-redis", inRedis);
     line("ttl-renewed", ttlRenewed);
-
-    // Extra context for humans (grader ignores non-contract lines… actually
-    // only key=number lines matter; keep extras as comments via stderr).
-    console.error(`demo:session key=${sessionKey(session.sid)} ttlBefore=${ttlBefore} ttlAfter=${ttlAfter}`);
 
     const ok = requests >= 3 && sids.size === 1 && inRedis === 1 && ttlRenewed === 1;
     if (!ok) process.exitCode = 1;
