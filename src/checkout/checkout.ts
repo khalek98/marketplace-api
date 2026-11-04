@@ -29,6 +29,19 @@ export interface CheckoutCartInput {
   /** When set with fingerprint — written in the same COMMIT as order+outbox (API-edge idempotency). */
   idempotencyKey?: string;
   fingerprint?: string;
+  /**
+   * Demo-only: throw after INSERT outbox, before COMMIT.
+   * Proves order + outbox share one transaction (crash-write).
+   */
+  abortAfterOutbox?: boolean;
+}
+
+/** Thrown when abortAfterOutbox is set — forces ROLLBACK of order+outbox together. */
+export class CheckoutAbortAfterOutbox extends Error {
+  constructor() {
+    super("checkout aborted after outbox insert (demo:crash-write)");
+    this.name = "CheckoutAbortAfterOutbox";
+  }
 }
 
 export interface CheckoutResult {
@@ -61,7 +74,7 @@ export async function checkout(input: CheckoutInput): Promise<CheckoutResult> {
 }
 
 export async function checkoutCart(input: CheckoutCartInput): Promise<CheckoutResult> {
-  const { buyerId, items, idempotencyKey, fingerprint } = input;
+  const { buyerId, items, idempotencyKey, fingerprint, abortAfterOutbox } = input;
 
   if (items.length === 0) {
     throw new ApplicationError(422, "Invalid order", "Order must contain at least one item.", "invalid-order");
@@ -195,6 +208,10 @@ export async function checkoutCart(input: CheckoutCartInput): Promise<CheckoutRe
             attempts: 0,
           }),
         );
+
+        if (abortAfterOutbox) {
+          throw new CheckoutAbortAfterOutbox();
+        }
 
         // Level 3: key identifies the client's intent. Conflict → roll back this whole TX
         // (order + outbox + stock/wallet) so a retry cannot create a second order.

@@ -32,6 +32,7 @@
     "demo:dlq": "bash scripts/with-secrets.sh dev node dist/demo-dlq.js",
     "demo:duplicate": "bash scripts/with-secrets.sh dev node dist/demo-duplicate.js",
     "demo:outbox": "bash scripts/with-secrets.sh dev node dist/demo-outbox.js",
+    "demo:crash-write": "bash scripts/with-secrets.sh dev node dist/demo-crash-write.js",
     "report": "bash scripts/with-secrets.sh dev node dist/report.js"
   },
   "dependencies": {
