@@ -1,6 +1,5 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 
-import { publishOrderPlaced } from "../broker/publish-order-placed";
 import { checkoutCart } from "../checkout/checkout";
 import { ApplicationError } from "../common/errors/application-error";
 import dataSource from "../data-source";
@@ -98,9 +97,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         qty: item.quantity,
       })),
     });
-
-    // After COMMIT: broker is outside the Postgres transaction (dual-write gap until HW-22).
-    await publishOrderPlaced({ orderId, buyerId: body.buyer_id });
+    // Publish is no longer here: checkout already wrote outbox in the same COMMIT.
+    // A relay (A3) will move unpublished rows to RabbitMQ.
 
     const entity = await dataSource.getRepository(OrderEntity).findOneOrFail({
       where: { id: orderId },

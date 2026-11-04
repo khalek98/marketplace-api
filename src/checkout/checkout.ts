@@ -1,8 +1,12 @@
+import { randomUUID } from "node:crypto";
+
+import { toOrderPlacedEvent } from "../broker/publish-order-placed";
 import { ApplicationError } from "../common/errors/application-error";
 import dataSource from "../data-source";
 import { Job } from "../entities/job.entity";
 import { Order } from "../entities/order.entity";
 import { OrderItem } from "../entities/order-item.entity";
+import { Outbox } from "../entities/outbox.entity";
 import { Product } from "../entities/product.entity";
 import { User } from "../entities/user.entity";
 import { Wallet } from "../entities/wallet.entity";
@@ -26,6 +30,7 @@ export interface CheckoutCartInput {
 
 export interface CheckoutResult {
   orderId: string;
+  outboxId: string;
 }
 
 /** Postgres driver RETURNING columns (snake_case), not entity property names. */
@@ -149,7 +154,28 @@ export async function checkoutCart(input: CheckoutCartInput): Promise<CheckoutRe
         }),
       );
 
-      return { orderId: saved.id };
+      // Same COMMIT as the order: event stays in outbox until a relay publishes it.
+      // outbox.id === eventId === future broker messageId (dedup key for consumers).
+      const outboxId = randomUUID();
+      const payload = toOrderPlacedEvent({
+        eventId: outboxId,
+        orderId: saved.id,
+        buyerId,
+        occurredAt: saved.createdAt,
+      });
+      await manager.save(
+        manager.create(Outbox, {
+          id: outboxId,
+          aggregateType: "Order",
+          aggregateId: String(saved.id),
+          type: payload.type,
+          payload,
+          publishedAt: null,
+          attempts: 0,
+        }),
+      );
+
+      return { orderId: saved.id, outboxId };
     });
   });
 }
