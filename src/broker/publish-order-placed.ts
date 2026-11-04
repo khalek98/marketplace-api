@@ -33,16 +33,10 @@ export function toOrderPlacedEvent(input: {
   };
 }
 
-/** Direct publish (HW-19 demos). Production path writes outbox in checkout, then relay publishes. */
-export async function publishOrderPlaced(input: { orderId: string; buyerId: string }): Promise<OrderPlacedEvent> {
-  const event = toOrderPlacedEvent({
-    eventId: randomUUID(),
-    orderId: input.orderId,
-    buyerId: input.buyerId,
-  });
-
+/** Publish a ready event (relay / demos). messageId = event.eventId (= outbox id on the happy path). */
+export async function publishOrderPlacedEvent(event: OrderPlacedEvent): Promise<void> {
   if (!isBrokerEnabled()) {
-    return event;
+    return;
   }
 
   await withConfirmChannel(async (ch) => {
@@ -58,6 +52,16 @@ export async function publishOrderPlaced(input: { orderId: string; buyerId: stri
     }
     await ch.waitForConfirms();
   });
+}
 
+/** Direct publish (HW-19 demos). Production path writes outbox in checkout, then relay publishes. */
+export async function publishOrderPlaced(input: { orderId: string; buyerId: string }): Promise<OrderPlacedEvent> {
+  const event = toOrderPlacedEvent({
+    eventId: randomUUID(),
+    orderId: input.orderId,
+    buyerId: input.buyerId,
+  });
+
+  await publishOrderPlacedEvent(event);
   return event;
 }
