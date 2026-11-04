@@ -14,6 +14,14 @@ export type RelayOutboxPassOptions = {
   queryRunner?: QueryRunner;
 };
 
+/** Simulated crash between publish and UPDATE published_at (demo:crash-relay). */
+export class RelayAbortBeforeUpdate extends Error {
+  constructor(readonly publishedToBroker: number) {
+    super("relay aborted after publish, before UPDATE published_at");
+    this.name = "RelayAbortBeforeUpdate";
+  }
+}
+
 type OutboxRow = {
   id: string;
   payload: OrderPlacedEvent;
@@ -60,7 +68,7 @@ export async function relayOutboxPass(options: RelayOutboxPassOptions = {}): Pro
     }
 
     if (options.abortBeforeUpdate) {
-      throw new Error("relay aborted after publish, before UPDATE published_at");
+      throw new RelayAbortBeforeUpdate(rows.length);
     }
 
     await qr.query(
