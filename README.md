@@ -263,13 +263,13 @@ Checkout (`src/checkout/checkout.ts`) — одна транзакція: ато�
 
 **Retry лише `40001` / `40P01`:** під `REPEATABLE READ` / `SERIALIZABLE` Postgres може відповісти «повтори транзакцію цілком» (serialization failure / deadlock). Це не бізнес-відмова (немає товару / коштів) і не unique/check (`23505` / `23514`) — ті не зникнуть від повтору. Обгортка `src/checkout/with-retry.ts` ловить тільки ці два SQLSTATE, з backoff+jitter, і перезапускає **усю** транзакцію (включно з читаннями). Checkout теж обгорнутий у `withRetry` — на випадок deadlock (`40P01`); `ApplicationError` бізнес-відмов не ретраяться.
 
-| Демо           | Команда                | Результат прогону (grader / локально)                                               |
-| -------------- | ---------------------- | ----------------------------------------------------------------------------------- |
-| Гонка checkout | `npm run demo:race`    | 200 спроб → **10** успішних, stock=0, відʼємних рядків=0                            |
-| Воркери        | `npm run demo:workers` | 4 воркери, розподіл 3/3/3/3, **оброблено двічі: 0**, час **320 мс** (bound 1200 мс) |
-| Retry          | `npm run demo:retry`   | **1** спійманий `40001` + retry; фінальний баланс **1020**                          |
+| Демо           | Команда                | Чистий прогін (після `down -v`, migrate, seed)                                               |
+| -------------- | ---------------------- | -------------------------------------------------------------------------------------------- |
+| Гонка checkout | `npm run demo:race`    | 200 спроб → **10** успішних, stock=0, відʼємних рядків=0                                     |
+| Воркери        | `npm run demo:workers` | 4 воркери, розподіл 3/3/3/3, **оброблено двічі: 0**, **320 мс** проти **1200 мс** послідовно |
+| Retry          | `npm run demo:retry`   | **1** спійманий `40001`, фінальний баланс **1020**                                           |
 
-`demo:race` сам скидає stock «Race Test» на 10 і піднімає баланси покупців перед `Promise.all` — можна ганяти повторно без ручного SQL. Перед першим прогоном потрібні migrate + seed. Час воркерів на іншій машині може трохи плавати (локально інколи ~400 мс), інваріанти — `двічі=0` і час < послідовного bound.
+Числа в таблиці — з того чистого прогону: 200 спроб, 10 успішних, stock 0; воркери 320 мс проти 1200 мс послідовно; один спійманий `40001`, фінал 1020. `demo:race` сам скидає stock «Race Test» на 10 і піднімає баланси покупців перед `Promise.all` — можна ганяти повторно без ручного SQL. Перед першим прогоном потрібні migrate + seed. На іншій машині час воркерів може відрізнятись; інваріанти ті самі: успішних рівно 10, stock 0, двічі = 0.
 
 ## Data layer ops
 
@@ -305,11 +305,11 @@ PGPASSWORD=app-v1-password psql -h 127.0.0.1 -p 21111 -U app_user_a -d pgbouncer
 
 ### Бекап
 
-Logical dump у `backups/` (тека в `.gitignore`):
+Logical dump у `backups/` (тека в `.gitignore`). `pg_dump` підключається на `DB_HOST`:`DB_PORT` з оточення (клієнт — образ `postgres:16` зі стека, бо хостовий `pg_dump` часто старіший за сервер). Це **прямий Postgres `21110`**, не PgBouncer: `pool_mode = transaction` не тримає сесію, яку потребує дамп.
 
 ```bash
 export SKIP_VAULT=1
-export DB_HOST=127.0.0.1 DB_PORT=21111 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
+export DB_HOST=127.0.0.1 DB_PORT=21110 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
 bash scripts/with-secrets.sh dev bash scripts/backup.sh
 # → друкує шлях, напр. …/backups/shop-2026-09-30.dump
 ```
@@ -327,6 +327,105 @@ bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh
 
 Протокол останнього прогону з RTO/RPO: [`RESTORE-DRILL.md`](./RESTORE-DRILL.md).
 
+## Тестування
+
+Чотири команди (Docker потрібен для контейнерів тестів і для брокера):
+
+| Команда                    | Що перевіряє                                              |
+| -------------------------- | --------------------------------------------------------- |
+| `npm run test:integration` | TypeORM / SQL проти Postgres у testcontainers (≥6 тестів) |
+| `npm run test:e2e`         | Повний Nest через supertest (create → read + 404)         |
+| `npm run test:contract`    | Consumer Pact → файл `pacts/*.json`                       |
+| `npm run verify:provider`  | Справжній Nest відповідає контракту                       |
+
+`pacts/` у `.gitignore` — файл з’являється після `test:contract`.
+
+### Ізоляція integration / e2e
+
+Між тестами — `TRUNCATE … RESTART IDENTITY CASCADE` на таблицях даних (не на `migrations`). Не зовнішній `ROLLBACK`: `checkoutCart` сам відкриває `dataSource.transaction()` і робить `COMMIT` на іншому конекті з пула; тестовий `BEGIN` цей коміт не відкотить.
+
+### Pact Broker (порт 21120)
+
+Compose піднімає `pact-broker` + його Postgres (`broker-db`, назовні не публікується). Не плутати з Postgres `21110`, PgBouncer `21111`, Infisical `21150`.
+
+```bash
+docker compose up -d --wait
+# UI / API брокера: http://127.0.0.1:21120
+```
+
+`verify:provider` читає `PACT_BROKER_URL` і опційно `PACT_BROKER_TOKEN`. Без `PACT_BROKER_URL` — перевірка лише проти локального `pacts/*.json`. З `PACT_BROKER_URL=http://127.0.0.1:21120` — контракт з брокера + `publishVerificationResult`. Якщо в шелі лишився старий `export PACT_BROKER_URL=…` після `docker compose down`, зніми його (`unset PACT_BROKER_URL`) або перевір локальний файл явно: `env -u PACT_BROKER_URL npm run verify:provider`. Ці змінні **не** в `env.schema.ts` (Nest стартує без брокера).
+
+Два шляхи запуску verify:
+
+```bash
+# Зі сховищем (ключі PACT_BROKER_URL / PACT_BROKER_TOKEN лежать у Infisical env)
+bash scripts/with-secrets.sh dev npm run verify:provider
+
+# Без vault (локально або CI): значення вже в оточенні
+export SKIP_VAULT=1
+export PACT_BROKER_URL=http://127.0.0.1:21120
+# export PACT_BROKER_TOKEN=…   # якщо брокер вимагає токен
+npm run verify:provider
+```
+
+### Локальний can-i-deploy (обидва стани)
+
+Порядок важливий: спочатку publish контракту, потім verify з публікацією результату, і лише після цього тег `prod` на **версію провайдера** (ту саму, що `PROVIDER_VERSION` у Verifier). Тег на консюмера гейт не відкриває.
+
+```bash
+export PACT_BROKER_URL=http://127.0.0.1:21120
+export PROVIDER_VERSION=1.0.0
+export CONSUMER_VERSION=1.0.0
+
+npm run test:contract
+
+curl -s -o /dev/null -w '%{http_code}\n' -X PUT \
+  "$PACT_BROKER_URL/pacts/provider/marketplace-api/consumer/marketplace-web/version/$CONSUMER_VERSION" \
+  -H 'Content-Type: application/json' \
+  -d @pacts/marketplace-web-marketplace-api.json
+# → 201
+
+# До verify / до тега prod — деплоїти ще не можна:
+curl -s "$PACT_BROKER_URL/can-i-deploy?pacticipant=marketplace-web&version=$CONSUMER_VERSION&to=prod"
+```
+
+Живий `summary` після publish, **до** verify і тега `prod`:
+
+```json
+{
+  "deployable": null,
+  "reason": "There is no verified pact between version 1.0.0 of marketplace-web and the latest version of marketplace-api with tag prod (no such version exists)",
+  "success": 0,
+  "failed": 0,
+  "unknown": 1
+}
+```
+
+```bash
+npm run verify:provider
+
+curl -s -o /dev/null -w '%{http_code}\n' -X PUT \
+  "$PACT_BROKER_URL/pacticipants/marketplace-api/versions/$PROVIDER_VERSION/tags/prod" \
+  -H 'Content-Type: application/json'
+# → 201
+
+curl -s "$PACT_BROKER_URL/can-i-deploy?pacticipant=marketplace-web&version=$CONSUMER_VERSION&to=prod"
+```
+
+Живий `summary` після verify + тега `prod` на `marketplace-api@1.0.0`:
+
+```json
+{
+  "deployable": true,
+  "reason": "All required verification results are published and successful",
+  "success": 1,
+  "failed": 0,
+  "unknown": 0
+}
+```
+
+CI: `.github/workflows/contract.yml` — publish → verify → tag `prod` → `can-i-deploy`. Секрети джоби — GitHub secrets `PACT_BROKER_URL` / `PACT_BROKER_TOKEN` (для локального compose в Actions достатньо дефолту `http://127.0.0.1:21120`).
+
 ## Grading
 
 Свіжий клон, чиста БД, без доступу до Infisical. Дев-креденшели стенда (не секрет хмари):
@@ -341,9 +440,10 @@ export SKIP_VAULT=1    # у грейдера немає доступу до сх
 
 Далі (ORM / concurrency): `npm ci && npx tsc --noEmit`, `npm run build && npm run migrate && npm run migrate:show`, `npm run migrate:revert && npm run migrate`, `npm run seed && npm run seed`, `npm run demo:nplus1`, `npm run report`, `npm run demo:race`, `npm run demo:workers`, `npm run demo:retry`.
 
-Бекап і restore-drill (після того як у БД є дані — хоча б після `seed`):
+Бекап і restore-drill (після того як у БД є дані — хоча б після `seed`). Дамп іде на прямий Postgres, не на порт застосунку:
 
 ```bash
+export DB_HOST=127.0.0.1 DB_PORT=21110 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
 bash scripts/with-secrets.sh dev bash scripts/backup.sh
 bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh
 ```

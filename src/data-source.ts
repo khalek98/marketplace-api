@@ -41,7 +41,8 @@ function postgresOptionsFromEnv(): {
 export default new DataSource({
   type: "postgres",
   ...postgresOptionsFromEnv(),
-  entities: [path.join(__dirname, "entities/**/*.js")],
-  migrations: [path.join(__dirname, "migrations/*.js")],
+  // dist/ (CLI, start) loads .js; ts-jest under src/ loads .ts.
+  entities: [path.join(__dirname, "entities/**/*.{js,ts}")],
+  migrations: [path.join(__dirname, "migrations/*.{js,ts}")],
   synchronize: false,
 });
