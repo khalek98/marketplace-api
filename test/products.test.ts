@@ -1,18 +1,18 @@
 import { INestApplication } from "@nestjs/common";
 import request from "supertest";
-import { createApp } from "../src/create-app";
 import { randomUUID } from "node:crypto";
-import { assertProblemJson, postOrder } from "./helpers";
+import { assertProblemJson } from "./helpers";
+import { createHttpApp, stopHttpDatabase } from "./http-app";
 
 let app: INestApplication;
 
 beforeAll(async () => {
-  app = await createApp();
-  await app.init();
+  app = await createHttpApp();
 });
 
 afterAll(async () => {
-  await app.close();
+  if (app) await app.close();
+  await stopHttpDatabase();
 });
 
 describe("GET /products", () => {
