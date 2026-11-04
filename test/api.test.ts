@@ -1,18 +1,18 @@
 import { INestApplication } from "@nestjs/common";
 import request from "supertest";
-import { createApp } from "../src/create-app";
 import { assertProblemJson } from "./helpers";
+import { createHttpApp, stopHttpDatabase } from "./http-app";
 
 describe("unknown routes", () => {
   let app: INestApplication;
 
   beforeAll(async () => {
-    app = await createApp();
-    await app.init();
+    app = await createHttpApp();
   });
 
   afterAll(async () => {
-    await app.close();
+    if (app) await app.close();
+    await stopHttpDatabase();
   });
 
   it("returns 404 problem+json", async () => {

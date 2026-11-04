@@ -48,6 +48,30 @@ async function seedOrder7(ds: DataSource): Promise<void> {
   );
 }
 
+/** Buyer, seller, product and wallet so POST /orders can checkout without a pre-built order. */
+async function seedBuyerCanPurchase(ds: DataSource): Promise<void> {
+  await ds.query(
+    `INSERT INTO users (id, email, role)
+     VALUES (1, 'pact-buyer@example.com', 'buyer')
+     ON CONFLICT (id) DO NOTHING`,
+  );
+  await ds.query(
+    `INSERT INTO users (id, email, role)
+     VALUES (2, 'pact-seller@example.com', 'seller')
+     ON CONFLICT (id) DO NOTHING`,
+  );
+  await ds.query(
+    `INSERT INTO products (id, seller_id, name, description, price_cents, stock_qty, status)
+     VALUES (1, 2, 'Pact Product', 'Seed for pact provider state', 2500, 10, 'active')
+     ON CONFLICT (id) DO NOTHING`,
+  );
+  await ds.query(
+    `INSERT INTO wallets (user_id, balance_cents)
+     VALUES (1, 50000)
+     ON CONFLICT (user_id) DO NOTHING`,
+  );
+}
+
 /**
  * Real marketplace-api (Nest + testcontainers Postgres) must satisfy the pact.
  * Uses Jest/ts-jest so Nest DI keeps emitDecoratorMetadata (tsx/esbuild would not).
@@ -58,7 +82,10 @@ describe("contract · provider verification: marketplace-api", () => {
   let cleanupAuth: () => void;
 
   beforeAll(async () => {
-    expect(fs.existsSync(PACT_FILE)).toBe(true);
+    // Broker mode reads the pact from PACT_BROKER_URL. The local file is only the fallback.
+    if (!resolveBrokerUrl()) {
+      expect(fs.existsSync(PACT_FILE)).toBe(true);
+    }
 
     pg = await startMarketplacePg("(pact-provider)");
     ({ cleanup: cleanupAuth } = applyNestTestEnv());
@@ -106,6 +133,9 @@ describe("contract · provider verification: marketplace-api", () => {
       stateHandlers: {
         "order 7 exists": async () => {
           await seedOrder7(pg.dataSource);
+        },
+        "buyer 1 can purchase product 1": async () => {
+          await seedBuyerCanPurchase(pg.dataSource);
         },
       },
       logLevel: "warn",
