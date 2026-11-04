@@ -539,7 +539,7 @@ curl -s "$PACT_BROKER_URL/can-i-deploy?pacticipant=marketplace-web&version=$CONS
 }
 ```
 
-CI: `.github/workflows/contract.yml` — job `contract` робить publish → verify → `can-i-deploy` і падає, якщо `deployable` не `true`. Тег `prod` ставить окрема job `deploy`, і лише після успішного гейта. На порожньому брокері відповідь лишається `unknown`, деплой не стартує. Секрети — GitHub secrets `PACT_BROKER_URL` / `PACT_BROKER_TOKEN` (у job `contract` для локального compose в Actions достатньо дефолту `http://127.0.0.1:21120`).
+CI: `.github/workflows/contract.yml` — job `contract` робить publish → verify → `can-i-deploy`. Джоба падає, коли `deployable` є `false`. На порожньому брокері відповідь лишається `unknown` (версії з тегом `prod` ще немає) — це не провал верифікації, і джоба на цьому не червоніє. Тег `prod` ставить job `deploy` лише коли гейт уже відповів `true`. Секрети — GitHub secrets `PACT_BROKER_URL` / `PACT_BROKER_TOKEN` (у job `contract` для локального compose в Actions достатньо дефолту `http://127.0.0.1:21120`).
 
 ## Grading
 
