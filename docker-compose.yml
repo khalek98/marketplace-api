@@ -66,6 +66,31 @@ services:
       timeout: 2s
       retries: 15
 
+  # AMQP on 21130, management UI on 21131. Diagnostics, not an open port:
+  # the Erlang node can reset the first publish until check_running passes.
+  rabbit:
+    image: rabbitmq:4.3.4-management-alpine
+    hostname: rabbit
+    ports:
+      - "21130:5672"
+      - "21131:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: app
+      RABBITMQ_DEFAULT_PASS: app
+    healthcheck:
+      # Image user is root; the server drops to rabbitmq. A root diagnostics
+      # process writes .erlang.cookie, and the node then fails with eacces.
+      test:
+        [
+          "CMD-SHELL",
+          "su-exec rabbitmq rabbitmq-diagnostics -q check_running && su-exec rabbitmq rabbitmq-diagnostics -q check_port_connectivity",
+        ]
+      interval: 5s
+      start_interval: 1s
+      start_period: 40s
+      timeout: 10s
+      retries: 10
+
   # Contract catalog for can-i-deploy. Host port 21120 (not 21110/21111/21150).
   pact-broker:
     image: pactfoundation/pact-broker:2.142.0-pactbroker2.120.0
