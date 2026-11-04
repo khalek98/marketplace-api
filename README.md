@@ -265,11 +265,13 @@ npm run demo:crash-relay
 | `DB_URL`             | так                           | host/port/db для пулу. **Джерело: сховище** (локально gitignored `.env`; optional Infisical). User/password з URL ігноруються — з `secrets/db_auth`. У git лише фейковий рядок у `.env.example` |
 | `BROKER_URL`         | так                           | AMQP-адреса RabbitMQ (`amqp://…:21130`). **Джерело: сховище** (той самий шлях, що й `DB_URL`). Порт `21131` — лише management UI, не цей URL                                                    |
 | `REDIS_URL`          | так                           | Redis під **кеш** (`redis://…:21140`, `allkeys-lru`). **Джерело: сховище** (той самий шлях, що й `DB_URL`)                                                                                      |
-| `REDIS_QUEUE_URL`    | так                           | Redis під **чергу / сесії** (`redis://…:21141`, `noeviction`). Окремий інстанс — не `REDIS_URL`                                                                                                 |
+| `REDIS_QUEUE_URL`    | так                           | Redis під **чергу / сесії / rate-limit** (`redis://…:21141`, `noeviction`). Окремий інстанс — не `REDIS_URL`                                                                                    |
 | `CURSOR_HMAC_SECRET` | так                           | HMAC для cursor пагінації (без дефолту в схемі — має прийти ззовні)                                                                                                                             |
 | `DB_AUTH_FILE`       | ні (дефолт `secrets/db_auth`) | Шлях до файла з role + password Postgres (два рядки)                                                                                                                                            |
 | `LOG_LEVEL`          | ні (`info`)                   | `debug` \| `info` \| `warn` \| `error`                                                                                                                                                          |
 | `TIMEOUT_MS`         | ні (`5000`)                   | Таймаут зовнішніх викликів, мс                                                                                                                                                                  |
+
+HTTP rate-limit: **ковзне вікно** в Redis (Lua + ZSET) — не дозволяємо сплеск до 2× ліміту на межі фіксованого вікна; лічильник спільний для всіх подів.
 
 ### Ротація пароля БД без рестарту
 
