@@ -1,6 +1,10 @@
 export enum OrderStatus {
   Pending = "pending",
   Placed = "placed",
+  Packed = "packed",
+  Shipped = "shipped",
+  OutForDelivery = "out_for_delivery",
+  Delivered = "delivered",
   Cancelled = "cancelled",
 }
 
@@ -35,4 +39,8 @@ export type CreateOrderItemRequest = {
 export type CreateOrderRequest = {
   buyer_id: string;
   items: CreateOrderItemRequest[];
+};
+
+export type UpdateOrderStatusRequest = {
+  status: OrderStatus;
 };

@@ -173,6 +173,65 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalServerError"
+    patch:
+      tags:
+        - Orders
+      operationId: updateOrderStatus
+      summary: Move an order to the next status
+      description: >
+        Advances a placed order along packed, shipped, out_for_delivery, and
+        delivered. Cancellation is allowed only from placed or packed. Any
+        other jump returns 409 and leaves the row unchanged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateOrderStatusRequest"
+      responses:
+        "200":
+          description: The order after the status change.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /orders/{orderId}/events:
+    parameters:
+      - $ref: "#/components/parameters/OrderId"
+    get:
+      tags:
+        - Orders
+      operationId: streamOrderStatus
+      summary: Stream order status changes
+      description: >
+        Server-sent events for one order. Each event has id, event, and data.
+        A client that reconnects with Last-Event-ID receives only later events.
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: An open text/event-stream of order status changes.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
 components:
   parameters:
@@ -347,6 +406,23 @@ components:
             - active
             - archived
 
+    UpdateOrderStatusRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum:
+            - pending
+            - placed
+            - packed
+            - shipped
+            - out_for_delivery
+            - delivered
+            - cancelled
+
     CreateOrderRequest:
       type: object
       additionalProperties: false
@@ -396,6 +472,10 @@ components:
           enum:
             - pending
             - placed
+            - packed
+            - shipped
+            - out_for_delivery
+            - delivered
             - cancelled
         currency:
           type: string
