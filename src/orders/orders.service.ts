@@ -157,7 +157,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     }
 
     entity.status = next;
-    this.orderEvents.publish(id, next);
+    await this.orderEvents.publish(id, next);
     return this.toHttpOrder(entity);
   }
 

@@ -1,7 +1,11 @@
 import { Controller, Get, Param, Patch, Post, Body, Res, HttpCode, Headers } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { Response } from "express";
 import { Subscription } from "rxjs";
 
+import { ApplicationError } from "../common/errors/application-error";
+import { Env } from "../config/env.schema";
+import { buyerIdFromAuthorization } from "./buyer-token";
 import { OrderEventsService, OrderStatusEvent } from "./order-events.service";
 import { OrdersService } from "./orders.service";
 import { CreateOrderRequest, UpdateOrderStatusRequest } from "./orders.types";
@@ -11,15 +15,38 @@ export class OrdersController {
   constructor(
     private readonly ordersService: OrdersService,
     private readonly orderEvents: OrderEventsService,
+    private readonly config: ConfigService<Env, true>,
   ) {}
 
   @Get(":orderId/events")
   async events(
     @Param("orderId") orderId: string,
     @Headers("last-event-id") lastEventHeader: string | string[] | undefined,
+    @Headers("authorization") authorization: string | string[] | undefined,
     @Res() res: Response,
   ): Promise<void> {
+    const secret = this.config.get("CURSOR_HMAC_SECRET", { infer: true });
+    const header = Array.isArray(authorization) ? authorization[0] : authorization;
+    const buyerId = buyerIdFromAuthorization(header, secret);
+    if (!buyerId) {
+      throw new ApplicationError(
+        401,
+        "Missing buyer token",
+        "Authorization: Bearer <buyer token> is required to read this stream.",
+        "missing-buyer-token",
+      );
+    }
+
     await this.ordersService.getById(orderId);
+    const allowed = await this.ordersService.ownsOrder(orderId, buyerId);
+    if (!allowed) {
+      throw new ApplicationError(
+        403,
+        "Not the order owner",
+        "The buyer token does not own this order.",
+        "not-order-owner",
+      );
+    }
 
     res.writeHead(200, {
       "content-type": "text/event-stream",
@@ -48,7 +75,7 @@ export class OrdersController {
     });
     res.on("close", () => subscription.unsubscribe());
 
-    for (const event of this.orderEvents.missedAfter(orderId, lastSent)) write(event);
+    for (const event of await this.orderEvents.missedAfter(orderId, lastSent)) write(event);
     replaying = false;
     for (const event of pending) write(event);
   }

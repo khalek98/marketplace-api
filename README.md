@@ -54,16 +54,16 @@ User stories:
 
 ## Trade-offs: WebSocket vs SSE
 
-Для нотифікації «статус замовлення змінився» канал один і йде від сервера до клієнта. У проді для цієї стрічки я лишив би SSE: підписка — це сам `GET /orders/:id/events`, реконект і `Last-Event-ID` робить клієнт, окремий протокол не потрібен. Socket.io лишається там, де клієнт теж пише в той самий канал: `join` із перевіркою, що замовлення належить цьому покупцю, уже такий випадок, але для однієї стрічки статусів це зайве рукостискання.
+Для нотифікації «статус замовлення змінився» канал один і йде від сервера до клієнта. У проді для цієї стрічки я лишив би SSE: підписка — це сам `GET /orders/:id/events`, реконект і `Last-Event-ID` робить клієнт, окремий протокол не потрібен. Socket.io лишається там, де клієнт теж пише в той самий канал: `join` звіряє токен покупця з власником замовлення. Для однієї стрічки статусів це зайве рукостискання.
 
-| Критерій                 | WebSocket (socket.io)                                                            | SSE                                                                        |
-| ------------------------ | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Напрям каналу            | клієнт і сервер в одному з'єднанні                                               | лише сервер → клієнт                                                       |
-| Реконект / відновлення   | клієнт перепідключається сам; пропущене дочитується з буфера після нового `join` | `EventSource` надсилає `Last-Event-ID`, сервер віддає події з більшим `id` |
-| Вимоги до інфраструктури | довге з'єднання; на кількох інстансах кімнати процесу не спільні                 | звичайний HTTP; проксі не повинен буферизувати `text/event-stream`         |
-| Ціна на подію            | короткий фрейм після рукостискання                                               | текстовий блок `id` / `event` / `data` на кожну подію                      |
+| Критерій                 | WebSocket (socket.io)                                            | SSE                                                                                        |
+| ------------------------ | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Напрям каналу            | клієнт і сервер в одному з'єднанні                               | лише сервер → клієнт                                                                       |
+| Реконект / відновлення   | клієнт перепідключається сам; `join` історію не дограє           | `EventSource` надсилає `Last-Event-ID`, сервер читає пізніші рядки з `order_status_events` |
+| Вимоги до інфраструктури | довге з'єднання; на кількох інстансах кімнати процесу не спільні | звичайний HTTP; проксі не повинен буферизувати `text/event-stream`                         |
+| Ціна на подію            | короткий фрейм після рукостискання                               | текстовий блок `id` / `event` / `data` на кожну подію                                      |
 
-Кімната `orders:<id>` живе в пам'яті одного процесу: другий інстанс свою копію сокетів не бачить і `to(room)` туди не доставляє; це лікується `@socket.io/redis-adapter` (Pub/Sub між інстансами) і sticky sessions, поки транспорт socket.io ще починається з long-polling.
+Журнал статусів лежить у `order_status_events`: `seq` на замовлення лише зростає, тож `Last-Event-ID` після рестарту і на іншому процесі бачить ті самі номери. Кімната `orders:<id>` досі живе в пам'яті одного процесу: другий інстанс свою копію сокетів не бачить і `to(room)` туди не доставляє; жива доставка між процесами — `@socket.io/redis-adapter` і sticky sessions, поки транспорт socket.io ще починається з long-polling.
 
 ## Trade-offs
 
@@ -108,7 +108,7 @@ API слухає на порту з `PORT` у `.env` (у `.env.example` — `300
 
 ## Realtime
 
-На чистій машині: стерти volume, підняти Postgres, накатити міграції й seed, потім слухати API. Демо саме створює два замовлення (покупці `3` і `4`, товар `1` — це id після свіжого seed) і міняє статус лише після ack на `join`.
+На чистій машині: стерти volume, підняти Postgres, накатити міграції й seed, потім слухати API. Демо саме створює два замовлення (покупці `3` і `4`, товар `1` — це id після свіжого seed) і міняє статус лише після ack на `join`. Покупець береться з токена (`buyerId` + HMAC `CURSOR_HMAC_SECRET`): у сокета це `auth.token`, у SSE — `Authorization: Bearer`. Поле `buyerId` у тілі `join` сервер не читає.
 
 ```bash
 docker compose down -v
@@ -137,7 +137,7 @@ node scripts/realtime-demo.mjs --same-room
 
 Перший прогін друкує `A_RECEIVED=1` і `B_RECEIVED=0`. Другий, з `--same-room`, друкує `B_RECEIVED=1`. Обидва завершуються з кодом 0.
 
-Той самий потік по HTTP, на новому замовленні покупця `3`:
+Той самий потік по HTTP, на новому замовленні покупця `3`. Токен рахує `scripts/buyer-token.mjs` з `.env` у корені:
 
 ```bash
 ORDER=$(curl -sS -X POST http://localhost:3000/orders \
@@ -145,13 +145,19 @@ ORDER=$(curl -sS -X POST http://localhost:3000/orders \
   -H "Idempotency-Key: realtime-$RANDOM" \
   -d '{"buyer_id":"3","items":[{"product_id":"1","quantity":1}]}')
 ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$ORDER")
+TOKEN=$(node scripts/buyer-token.mjs 3)
 for s in packed shipped out_for_delivery delivered; do
   curl -sS -o /dev/null -X PATCH "http://localhost:3000/orders/$ID" \
     -H 'content-type: application/json' \
     -d "{\"status\":\"$s\"}"
 done
-curl -sN --max-time 2 -D - -o /dev/null "http://localhost:3000/orders/$ID/events" | grep -i '^content-type'
-curl -sN --max-time 2 -H 'Last-Event-ID: 3' "http://localhost:3000/orders/$ID/events" | grep '^id:' | head -1
+curl -sN --max-time 2 -D - -o /dev/null \
+  -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:3000/orders/$ID/events" | grep -i '^content-type'
+curl -sN --max-time 2 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Last-Event-ID: 3' \
+  "http://localhost:3000/orders/$ID/events" | grep '^id:' | head -1
 ```
 
 Перша команда показує `content-type: text/event-stream`. Друга — рядок `id:` із числом більше за 3.

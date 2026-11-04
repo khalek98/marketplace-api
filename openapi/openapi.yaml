@@ -216,6 +216,12 @@ paths:
         Server-sent events for one order. Each event has id, event, and data.
         A client that reconnects with Last-Event-ID receives only later events.
       parameters:
+        - name: Authorization
+          in: header
+          required: true
+          description: Bearer buyer token (`buyerId.hmac` with CURSOR_HMAC_SECRET).
+          schema:
+            type: string
         - name: Last-Event-ID
           in: header
           required: false
@@ -228,6 +234,18 @@ paths:
             text/event-stream:
               schema:
                 type: string
+        "401":
+          description: Missing or invalid buyer token.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: The token's buyer does not own this order.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
         "404":
           $ref: "#/components/responses/NotFound"
         "500":

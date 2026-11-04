@@ -182,4 +182,31 @@ describe("integration · data layer (testcontainers)", () => {
       expect(await ds.getRepository(Order).count()).toBe(1);
     });
   });
+
+  test("status event seq survives a new in-memory bus", async () => {
+    const buyer = await aUser().withRole("buyer").insert(ds);
+    const order = await ds.getRepository(Order).save(
+      ds.getRepository(Order).create({
+        buyer: { id: buyer.id } as User,
+        status: "placed",
+        currency: "UAH",
+        totalAmountCents: 100,
+      }),
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { OrderEventsService } =
+      require("../../src/orders/order-events.service") as typeof import("../../src/orders/order-events.service");
+    const first = new OrderEventsService();
+    const packed = await first.publish(order.id, "packed");
+    const shipped = await first.publish(order.id, "shipped");
+    expect(packed.id).toBe(1);
+    expect(shipped.id).toBe(2);
+
+    const restarted = new OrderEventsService();
+    expect(await restarted.missedAfter(order.id, 2)).toEqual([]);
+    expect(await restarted.missedAfter(order.id, 1)).toEqual([{ id: 2, orderId: order.id, status: "shipped" }]);
+    const next = await restarted.publish(order.id, "out_for_delivery");
+    expect(next.id).toBe(3);
+  });
 });
