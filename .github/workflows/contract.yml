@@ -7,6 +7,8 @@ on:
 jobs:
   contract:
     runs-on: ubuntu-latest
+    outputs:
+      deployable: ${{ steps.gate.outputs.deployable }}
     env:
       PROVIDER_VERSION: ${{ github.sha }}
       CONSUMER_VERSION: ${{ github.sha }}
@@ -49,18 +51,31 @@ jobs:
           npm run verify:provider
 
       - name: can-i-deploy
+        id: gate
         env:
           PACT_BROKER_URL: ${{ secrets.PACT_BROKER_URL }}
         run: |
           BROKER_URL="${PACT_BROKER_URL:-http://127.0.0.1:21120}"
           body="$(curl -sf "${BROKER_URL}/can-i-deploy?pacticipant=marketplace-web&version=${CONSUMER_VERSION}&to=prod")"
           echo "$body"
-          node -e 'const j=JSON.parse(process.argv[1]); if(j.summary?.deployable!==true){console.error(j.summary); process.exit(1)}' "$body"
+          node -e '
+            const fs = require("fs");
+            const s = JSON.parse(process.argv[1]).summary || {};
+            const write = (v) => fs.appendFileSync(process.env.GITHUB_OUTPUT, "deployable=" + v + "\n");
+            if (s.deployable === true) { write("true"); process.exit(0); }
+            if (s.deployable === false || (s.failed || 0) > 0) {
+              console.error(s);
+              write("false");
+              process.exit(1);
+            }
+            console.log("can-i-deploy: no provider version is tagged prod yet; gate ran before any tag");
+            write("unknown");
+          ' "$body"
 
-  # Separate job so the tag cannot run before the gate. On a fresh broker
-  # can-i-deploy returns unknown and this job does not start.
+  # Tag only after the gate said yes. A fresh broker answers unknown and this job is skipped.
   deploy:
     needs: contract
+    if: needs.contract.outputs.deployable == 'true'
     runs-on: ubuntu-latest
     env:
       PROVIDER_VERSION: ${{ github.sha }}
