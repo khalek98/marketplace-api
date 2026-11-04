@@ -1,4 +1,5 @@
 import { Logger, OnModuleDestroy } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import {
   ConnectedSocket,
   MessageBody,
@@ -11,12 +12,13 @@ import {
 import { Subscription } from "rxjs";
 import { Server, Socket } from "socket.io";
 
+import { Env } from "../config/env.schema";
+import { verifyBuyerToken } from "./buyer-token";
 import { OrderEventsService } from "./order-events.service";
 import { OrdersService } from "./orders.service";
 
 type JoinBody = {
   orderId?: unknown;
-  buyerId?: unknown;
 };
 
 type JoinAck = { ok: true; room: string } | { ok: false };
@@ -29,6 +31,7 @@ export class OrdersGateway implements OnGatewayInit, OnGatewayConnection, OnGate
   constructor(
     private readonly orders: OrdersService,
     private readonly orderEvents: OrderEventsService,
+    private readonly config: ConfigService<Env, true>,
   ) {}
 
   afterInit(server: Server): void {
@@ -52,7 +55,11 @@ export class OrdersGateway implements OnGatewayInit, OnGatewayConnection, OnGate
   @SubscribeMessage("join")
   async join(@ConnectedSocket() client: Socket, @MessageBody() body: JoinBody): Promise<JoinAck> {
     const orderId = typeof body?.orderId === "string" ? body.orderId.trim() : "";
-    const buyerId = typeof body?.buyerId === "string" ? body.buyerId.trim() : "";
+    const rawToken = client.handshake.auth?.token;
+    const buyerId =
+      typeof rawToken === "string"
+        ? verifyBuyerToken(rawToken, this.config.get("CURSOR_HMAC_SECRET", { infer: true }))
+        : null;
     if (!orderId || !buyerId) {
       this.logger.log(`${client.id} join refused`);
       return { ok: false };

@@ -8,7 +8,7 @@ export interface MarketplacePg {
   stop(): Promise<void>;
 }
 
-const DATA_TABLES = ["order_items", "orders", "jobs", "products", "wallets", "users"] as const;
+const DATA_TABLES = ["order_status_events", "order_items", "orders", "jobs", "products", "wallets", "users"] as const;
 
 /**
  * Start a real postgres:16-alpine, point process.env at it, then load the

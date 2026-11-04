@@ -1,5 +1,7 @@
 import { io } from "socket.io-client";
 
+import { buyerToken } from "./buyer-token.mjs";
+
 // Fresh seed: sellers are 1–2, buyer1 is 3, buyer2 is 4, the first product is 1.
 // GET /products is still the in-memory catalog; checkout debits the SQL product.
 const base = `http://127.0.0.1:${process.env.PORT ?? 3000}`;
@@ -26,18 +28,18 @@ const roomB = sameRoom ? orderA : orderB;
 const buyerForB = sameRoom ? buyerA : buyerB;
 const expectB = sameRoom ? 1 : 0;
 
-socketA = connect((event) => {
+socketA = connect(buyerA, (event) => {
   if (event?.orderId === orderA) receivedA += 1;
 });
-socketB = connect((event) => {
+socketB = connect(buyerForB, (event) => {
   if (event?.orderId === orderA) receivedB += 1;
 });
 
 try {
   await Promise.all([once(socketA, "connect"), once(socketB, "connect")]);
 
-  const ackA = await join(socketA, { orderId: orderA, buyerId: buyerA });
-  const ackB = await join(socketB, { orderId: roomB, buyerId: buyerForB });
+  const ackA = await join(socketA, { orderId: orderA });
+  const ackB = await join(socketB, { orderId: roomB });
   if (!ackA?.ok || !ackB?.ok) {
     console.error("join refused");
     report(1);
@@ -68,8 +70,11 @@ try {
   report(1);
 }
 
-function connect(onStatus) {
-  const socket = io(base, { transports: ["websocket", "polling"] });
+function connect(buyerId, onStatus) {
+  const socket = io(base, {
+    transports: ["websocket", "polling"],
+    auth: { token: buyerToken(buyerId) },
+  });
   socket.on("order.status", onStatus);
   socket.on("connect_error", (err) => {
     console.error(err.message);
