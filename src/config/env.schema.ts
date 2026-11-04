@@ -5,7 +5,7 @@ export const envSchema = z.object({
   // Host/port/db/user for pg.Pool. Username is taken from DB_AUTH_FILE.
   DB_URL: z.url({ protocol: /^postgres$/ }),
   // AMQP URL for RabbitMQ (compose publishes 21130). Same secret path as DB_URL.
-  BROKER_URL: z.url({ protocol: /^amqp$/ }),
+  BROKER_URL: z.url({ protocol: /^amqps?$/ }),
   DB_AUTH_FILE: z.string().min(1).default("secrets/db_auth"),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   TIMEOUT_MS: z.coerce.number().int().positive().default(5000),

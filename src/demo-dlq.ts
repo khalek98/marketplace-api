@@ -86,8 +86,10 @@ async function main(): Promise<void> {
 
     let reason: string | null = null;
     await withChannel(async (ch) => {
-      const msg = await ch.get(QUEUE.orderPlacedDlq, { noAck: true });
-      if (msg) reason = deathReason(msg);
+      const msg = await ch.get(QUEUE.orderPlacedDlq, { noAck: false });
+      if (!msg) return;
+      reason = deathReason(msg);
+      ch.nack(msg, false, true);
     });
 
     line("rejected", rejected);

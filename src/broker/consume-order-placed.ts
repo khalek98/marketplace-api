@@ -3,7 +3,7 @@ import type { Channel, ChannelModel, ConsumeMessage } from "amqplib";
 import dataSource from "../data-source";
 import { applyOrderPlaced } from "./apply-order-placed";
 import { connectBroker, brokerUrlFromEnv } from "./connect";
-import { PREFETCH, QUEUE } from "./names";
+import { DELIVERY_LIMIT, PREFETCH, QUEUE } from "./names";
 import type { OrderPlacedEvent } from "./publish-order-placed";
 import { declareTopology } from "./topology";
 
@@ -47,6 +47,14 @@ function parseOrderPlaced(content: Buffer): OrderPlacedEvent | null {
   } catch {
     return null;
   }
+}
+
+/** Quorum queues set x-delivery-count to how many times the message was delivered before this one. */
+function deliveryAttempts(msg: ConsumeMessage): number {
+  const raw = msg.properties.headers?.["x-delivery-count"];
+  const previous = typeof raw === "number" ? raw : Number(raw ?? 0);
+  const prior = Number.isFinite(previous) ? previous : 0;
+  return prior + 1;
 }
 
 async function ensureDataSource(): Promise<void> {
@@ -101,7 +109,14 @@ export async function startOrderPlacedConsumer(options?: {
         channel.ack(msg);
         handlers.onAcked?.(event);
       } catch {
-        // Transient failure: requeue. Poison shape is rejected above (noAck path to DLQ).
+        // Poison JSON is rejected above. A handler error requeues until DELIVERY_LIMIT,
+        // then reject(requeue=false) so a missing INSERT cannot spin forever.
+        const attempts = deliveryAttempts(msg);
+        if (attempts >= DELIVERY_LIMIT) {
+          channel.reject(msg, false);
+          handlers.onRejected?.(msg);
+          return;
+        }
         channel.nack(msg, false, true);
       }
     },

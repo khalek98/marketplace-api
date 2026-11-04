@@ -201,6 +201,8 @@ npm run demo:duplicate
 
 Це **at-least-once** доставка плюс ідемпотентний ефект у Postgres — разом вони дають exactly-once **результат**. Exactly-once **доставки** брокер не обіцяє: `ack` означає «я більше не вимагаю повтору», а не «дійшло один раз».
 
+Помилка обробника (не битий JSON) робить `nack` з requeue, але не більше `x-delivery-limit` (5) на `shop.orders.placed`. Далі `reject` без requeue, і повідомлення лежить у DLQ. Інакше відсутній `INSERT` крутив би ту саму доставку без зупинки.
+
 Між `COMMIT` замовлення і `publish` процес може впасти — замовлення буде, події не буде (dual write). Це закриє transactional outbox пізніше. Дефолтний шлях dead-letter у RabbitMQ — at-most-once на репаблиш у DLX; для локальних демо цього достатньо. У проді для quorum мав би сенс LTS-образ **4.2.x**; тут **4.3.4-management**, щоб поведінка `reject` / `nack` збігалась із матеріалами лекції.
 
 ## Configuration

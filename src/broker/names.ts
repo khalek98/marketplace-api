@@ -19,4 +19,7 @@ export const ROUTING_KEY = {
 /** Unacked delivery window. Applied in the consumer (demo prints this number). */
 export const PREFETCH = 20;
 
+/** Quorum x-delivery-limit. After this many deliveries a requeue becomes a dead-letter. */
+export const DELIVERY_LIMIT = 5;
+
 export const QUORUM = { "x-queue-type": "quorum" } as const;

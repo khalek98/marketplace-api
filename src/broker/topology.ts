@@ -1,6 +1,6 @@
 import type { Channel } from "amqplib";
 
-import { EXCHANGE, QUEUE, QUORUM, ROUTING_KEY } from "./names";
+import { DELIVERY_LIMIT, EXCHANGE, QUEUE, QUORUM, ROUTING_KEY } from "./names";
 
 /**
  * Consumer-side (or bootstrap) topology. Publisher only knows EXCHANGE.events
@@ -29,6 +29,7 @@ export async function declareTopology(ch: Channel): Promise<void> {
     arguments: {
       ...QUORUM,
       "x-dead-letter-exchange": EXCHANGE.dlx,
+      "x-delivery-limit": DELIVERY_LIMIT,
     },
   });
   await ch.bindQueue(QUEUE.orderPlaced, EXCHANGE.events, ROUTING_KEY.orderPlaced);
