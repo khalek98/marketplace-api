@@ -6,6 +6,10 @@ export const envSchema = z.object({
   DB_URL: z.url({ protocol: /^postgres$/ }),
   // AMQP URL for RabbitMQ (compose publishes 21130). Same secret path as DB_URL.
   BROKER_URL: z.url({ protocol: /^amqps?$/ }),
+  // Cache Redis (compose publishes 21140). Same vault path as DB_URL / BROKER_URL.
+  REDIS_URL: z.url({ protocol: /^rediss?$/ }),
+  // BullMQ / sessions Redis (compose publishes 21141). Separate instance — noeviction.
+  REDIS_QUEUE_URL: z.url({ protocol: /^rediss?$/ }),
   DB_AUTH_FILE: z.string().min(1).default("secrets/db_auth"),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
