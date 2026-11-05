@@ -45,13 +45,16 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async getById(id: string): Promise<Order> {
+  async getById(id: string, viewerId?: string): Promise<Order> {
     const entity = await dataSource.getRepository(OrderEntity).findOne({
       where: { id },
-      relations: { items: { product: true } },
+      relations: { buyer: true, items: { product: true } },
     });
     if (!entity) {
       throw new ApplicationError(404, "Order not found", `Order '${id}' does not exist.`, "order-not-found");
+    }
+    if (viewerId !== undefined && entity.buyer.id !== viewerId) {
+      throw new ApplicationError(403, "Not the order owner", "This order belongs to another buyer.", "not-order-owner");
     }
     return this.toHttpOrder(entity);
   }
@@ -59,6 +62,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   async create(
     body: CreateOrderRequest,
     idempotencyKey: string,
+    buyerId: string,
   ): Promise<{ order: Order; location: string; replay: boolean }> {
     if (!idempotencyKey?.trim()) {
       throw new ApplicationError(
@@ -68,10 +72,18 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         "missing-idempotency-key",
       );
     }
+    if (body.buyer_id !== buyerId) {
+      throw new ApplicationError(
+        403,
+        "Buyer mismatch",
+        "buyer_id does not match the access token subject.",
+        "buyer-mismatch",
+      );
+    }
 
     const fingerprint = canonicalize(body);
     const { orderId, replay } = await checkoutCart({
-      buyerId: body.buyer_id,
+      buyerId,
       items: body.items.map((item) => ({
         productId: item.product_id,
         qty: item.quantity,

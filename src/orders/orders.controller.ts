@@ -1,10 +1,11 @@
-import { Controller, Get, Param, Patch, Post, Body, Res, HttpCode, Headers } from "@nestjs/common";
+import { Controller, Get, Param, Patch, Post, Body, Res, HttpCode, Headers, UseGuards, Req } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Response } from "express";
 import { Subscription } from "rxjs";
 
 import { ApplicationError } from "../common/errors/application-error";
 import { Env } from "../config/env.schema";
+import { AccessTokenGuard, RequestWithPrincipal } from "../auth/access-token.guard";
 import { buyerIdFromAuthorization } from "./buyer-token";
 import { OrderEventsService, OrderStatusEvent } from "./order-events.service";
 import { OrdersService } from "./orders.service";
@@ -81,8 +82,18 @@ export class OrdersController {
   }
 
   @Get(":orderId")
-  getById(@Param("orderId") orderId: string) {
-    return this.ordersService.getById(orderId);
+  @UseGuards(AccessTokenGuard)
+  getById(@Param("orderId") orderId: string, @Req() req: RequestWithPrincipal) {
+    const buyerId = req.principal?.sub;
+    if (!buyerId) {
+      throw new ApplicationError(
+        401,
+        "Invalid access token",
+        "A valid Bearer access token is required.",
+        "invalid-access-token",
+      );
+    }
+    return this.ordersService.getById(orderId, buyerId);
   }
 
   @Patch(":orderId")
@@ -92,12 +103,23 @@ export class OrdersController {
 
   @Post()
   @HttpCode(201)
+  @UseGuards(AccessTokenGuard)
   async create(
     @Headers("Idempotency-Key") idempotencyKey: string,
     @Body() body: CreateOrderRequest,
+    @Req() req: RequestWithPrincipal,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.ordersService.create(body, idempotencyKey);
+    const buyerId = req.principal?.sub;
+    if (!buyerId) {
+      throw new ApplicationError(
+        401,
+        "Invalid access token",
+        "A valid Bearer access token is required.",
+        "invalid-access-token",
+      );
+    }
+    const result = await this.ordersService.create(body, idempotencyKey, buyerId);
     res.setHeader("Location", result.location);
 
     if (result.replay) {

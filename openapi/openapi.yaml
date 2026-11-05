@@ -13,12 +13,137 @@ servers:
     description: Current host, including the local HW-09 adapter.
 security: []
 tags:
+  - name: Auth
+    description: Login and session tokens.
   - name: Products
     description: Marketplace catalog operations.
   - name: Orders
     description: Order placement and retrieval operations.
 
 paths:
+  /auth/login:
+    post:
+      tags:
+        - Auth
+      operationId: login
+      summary: Log in
+      description: >
+        Checks the email and password and returns an access token plus an
+        opaque refresh token. Unknown email and a wrong password get the same
+        401. The refresh token is not a JWT and is not stored as-is.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: A fresh access token and refresh token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: The email or password is wrong.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /auth/refresh:
+    post:
+      tags:
+        - Auth
+      operationId: refreshSession
+      summary: Rotate a refresh token
+      description: >
+        Marks the presented refresh token used and returns a new pair in the
+        same family. The absolute expiry is copied, not extended. A second use
+        inside a few seconds returns that same new pair. A later reuse revokes
+        every token in the family.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: The new access token and refresh token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: The refresh token is unknown, expired, revoked, or reused.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /auth/logout:
+    post:
+      tags:
+        - Auth
+      operationId: logout
+      summary: Log out
+      description: >
+        Revokes every refresh token in this login's family, then denylists the
+        access token's jti until it would have expired. These are two steps.
+        If the denylist write fails the response is not success, and the client
+        retries with the same access token.
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: The refresh family is revoked and the access token is denylisted.
+        "401":
+          description: The access token is missing, expired, or already denylisted.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "503":
+          description: The family was revoked, but the denylist write failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /auth/me:
+    get:
+      tags:
+        - Auth
+      operationId: currentUser
+      summary: Who the access token is
+      description: Requires a valid access token that is not on the denylist.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The subject and role from the access token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUser"
+        "401":
+          description: The access token is missing, expired, or denylisted.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
   /products:
     get:
       tags:
@@ -77,6 +202,8 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/UpdateProductRequest"
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: The updated product.
@@ -86,6 +213,18 @@ paths:
                 $ref: "#/components/schemas/Product"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          description: The access token is missing or not valid.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: The token is valid, but the role cannot edit the catalog.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -121,6 +260,8 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/CreateOrderRequest"
+      security:
+        - bearerAuth: []
       responses:
         "201":
           description: >
@@ -144,6 +285,18 @@ paths:
                 $ref: "#/components/schemas/Order"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          description: The access token is missing, expired, or not signed by the active key.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: The token is valid, but buyer_id is not the token subject.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
         "409":
           $ref: "#/components/responses/Conflict"
         "422":
@@ -159,7 +312,9 @@ paths:
         - Orders
       operationId: getOrder
       summary: Get an order
-      description: Returns an order with its historical item snapshots.
+      description: Returns an order with its historical item snapshots. The caller must be the buyer.
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: The requested order.
@@ -169,6 +324,18 @@ paths:
                 $ref: "#/components/schemas/Order"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          description: The access token is missing or not valid.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: The token is valid, but this buyer does not own the order.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
         "404":
           $ref: "#/components/responses/NotFound"
         "500":
@@ -252,6 +419,12 @@ paths:
           $ref: "#/components/responses/InternalServerError"
 
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access token returned by POST /auth/login.
   parameters:
     PageLimit:
       name: limit
@@ -325,6 +498,76 @@ components:
             $ref: "#/components/schemas/Problem"
 
   schemas:
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          minLength: 3
+          maxLength: 320
+        password:
+          type: string
+          minLength: 1
+          maxLength: 200
+
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          minLength: 1
+          maxLength: 512
+
+    CurrentUser:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - role
+      properties:
+        id:
+          $ref: "#/components/schemas/ResourceId"
+        role:
+          type: string
+          enum:
+            - buyer
+            - seller
+            - admin
+
+    TokenPair:
+      type: object
+      additionalProperties: false
+      required:
+        - access_token
+        - refresh_token
+        - token_type
+        - expires_in
+      properties:
+        access_token:
+          type: string
+          minLength: 1
+          description: ES256 JWT. The client keeps it in memory.
+        refresh_token:
+          type: string
+          minLength: 1
+          description: Opaque random token. Not a JWT.
+        token_type:
+          type: string
+          enum:
+            - Bearer
+        expires_in:
+          type: integer
+          minimum: 1
+          description: Access-token lifetime in seconds.
+
     ResourceId:
       type: string
       minLength: 1
@@ -450,7 +693,9 @@ components:
       properties:
         buyer_id:
           $ref: "#/components/schemas/ResourceId"
-          description: Buyer user id (SQL `users.id`); wallet is debited in the same checkout transaction.
+          description: >
+            Must equal the access token subject (`sub`). A different id is
+            rejected with 403. The order is stored for that subject.
         items:
           type: array
           minItems: 1

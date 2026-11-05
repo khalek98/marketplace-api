@@ -10,6 +10,11 @@ export const envSchema = z.object({
   REDIS_URL: z.url({ protocol: /^rediss?$/ }),
   // BullMQ / sessions Redis (compose publishes 21141). Separate instance — noeviction.
   REDIS_QUEUE_URL: z.url({ protocol: /^rediss?$/ }),
+  // ES256 signing. No defaults: a default here is a key baked into the code.
+  JWT_KID: z.string().min(1),
+  JWT_PRIVATE_KEY: z.string().min(1),
+  JWT_PUBLIC_KEY: z.string().min(1),
+  REFRESH_TOKEN_PEPPER: z.string().min(1),
   DB_AUTH_FILE: z.string().min(1).default("secrets/db_auth"),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   TIMEOUT_MS: z.coerce.number().int().positive().default(5000),

@@ -1,4 +1,7 @@
-import { Controller, Get, Param, Patch, Query, Body } from "@nestjs/common";
+import { Controller, Get, Param, Patch, Query, Body, UseGuards } from "@nestjs/common";
+
+import { AccessTokenGuard } from "../auth/access-token.guard";
+import { Roles, RolesGuard } from "../auth/roles.guard";
 import { ProductsService } from "./products.service";
 import { ProductPatch } from "./products.types";
 
@@ -18,6 +21,8 @@ export class ProductsController {
   }
 
   @Patch(":productId")
+  @UseGuards(AccessTokenGuard, RolesGuard)
+  @Roles("seller", "admin")
   update(@Param("productId") productId: string, @Body() body: ProductPatch) {
     return this.productsService.update(productId, body);
   }

@@ -1,6 +1,7 @@
 import "reflect-metadata";
 
 import dataSource from "./data-source";
+import { hashPassword, SEED_PASSWORD, UNUSABLE_PASSWORD_HASH } from "./auth/password";
 import { Order } from "./entities/order.entity";
 import { OrderItem } from "./entities/order-item.entity";
 import { Product } from "./entities/product.entity";
@@ -11,6 +12,8 @@ const SELLERS = [
   { email: "seller1@seed.local", role: "seller" as const },
   { email: "seller2@seed.local", role: "seller" as const },
 ];
+
+const ADMIN = { email: "admin@seed.local", role: "admin" as const };
 
 const BUYERS_COUNT = 200;
 
@@ -33,7 +36,10 @@ async function upsertUser(email: string, role: User["role"]): Promise<User> {
   const repo = dataSource.getRepository(User);
   let user = await repo.findOne({ where: { email } });
   if (!user) {
-    user = await repo.save(repo.create({ email, role }));
+    user = await repo.save(repo.create({ email, role, passwordHash: await hashPassword(SEED_PASSWORD) }));
+  } else if (user.passwordHash === UNUSABLE_PASSWORD_HASH) {
+    user.passwordHash = await hashPassword(SEED_PASSWORD);
+    user = await repo.save(user);
   }
   return user;
 }
@@ -94,6 +100,7 @@ async function main() {
   for (const s of SELLERS) {
     sellers.push(await upsertUser(s.email, s.role));
   }
+  await upsertUser(ADMIN.email, ADMIN.role);
   const buyers: User[] = [];
   for (let i = 0; i < BUYERS_COUNT; i++) {
     const email = `buyer${i + 1}@seed.local`;
@@ -192,6 +199,7 @@ async function main() {
     "seed: done (idempotent). Check: SELECT count(*) FROM users; SELECT count(*) FROM products; SELECT count(*) FROM orders; SELECT count(*) FROM order_items;",
   );
   console.log("seed: wallets count", await dataSource.getRepository(Wallet).count());
+  console.log(`seed: password for buyer1@seed.local, seller1@seed.local, admin@seed.local is ${SEED_PASSWORD}`);
 
   await dataSource.destroy();
 }

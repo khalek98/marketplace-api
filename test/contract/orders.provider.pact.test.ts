@@ -4,7 +4,10 @@ import path from "node:path";
 import { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { Verifier } from "@pact-foundation/pact";
+import request from "supertest";
 import type { DataSource } from "typeorm";
+
+import { TEST_PASSWORD, testPasswordHash } from "../integration/testkit/builders";
 
 import { applyNestTestEnv } from "../integration/testkit/nest-env";
 import { MarketplacePg, startMarketplacePg } from "../integration/testkit/pg";
@@ -22,13 +25,13 @@ function resolveBrokerUrl(): string {
 
 async function seedOrder7(ds: DataSource): Promise<void> {
   await ds.query(
-    `INSERT INTO users (id, email, role)
-     VALUES (1, 'pact-buyer@example.com', 'buyer')
+    `INSERT INTO users (id, email, role, password_hash)
+     VALUES (1, 'pact-buyer@example.com', 'buyer', 'unset')
      ON CONFLICT (id) DO NOTHING`,
   );
   await ds.query(
-    `INSERT INTO users (id, email, role)
-     VALUES (2, 'pact-seller@example.com', 'seller')
+    `INSERT INTO users (id, email, role, password_hash)
+     VALUES (2, 'pact-seller@example.com', 'seller', 'unset')
      ON CONFLICT (id) DO NOTHING`,
   );
   await ds.query(
@@ -51,13 +54,13 @@ async function seedOrder7(ds: DataSource): Promise<void> {
 /** Buyer, seller, product and wallet so POST /orders can checkout without a pre-built order. */
 async function seedBuyerCanPurchase(ds: DataSource): Promise<void> {
   await ds.query(
-    `INSERT INTO users (id, email, role)
-     VALUES (1, 'pact-buyer@example.com', 'buyer')
+    `INSERT INTO users (id, email, role, password_hash)
+     VALUES (1, 'pact-buyer@example.com', 'buyer', 'unset')
      ON CONFLICT (id) DO NOTHING`,
   );
   await ds.query(
-    `INSERT INTO users (id, email, role)
-     VALUES (2, 'pact-seller@example.com', 'seller')
+    `INSERT INTO users (id, email, role, password_hash)
+     VALUES (2, 'pact-seller@example.com', 'seller', 'unset')
      ON CONFLICT (id) DO NOTHING`,
   );
   await ds.query(
@@ -79,7 +82,8 @@ async function seedBuyerCanPurchase(ds: DataSource): Promise<void> {
 describe("contract · provider verification: marketplace-api", () => {
   let pg: MarketplacePg;
   let app: INestApplication;
-  let cleanupAuth: () => void;
+  let cleanupAuth: () => Promise<void>;
+  let buyerAccess = "";
 
   beforeAll(async () => {
     // Broker mode reads the pact from PACT_BROKER_URL. The local file is only the fallback.
@@ -88,7 +92,7 @@ describe("contract · provider verification: marketplace-api", () => {
     }
 
     pg = await startMarketplacePg("(pact-provider)");
-    ({ cleanup: cleanupAuth } = applyNestTestEnv());
+    ({ cleanup: cleanupAuth } = await applyNestTestEnv());
 
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { AppModule } = require("../../src/app.module") as typeof import("../../src/app.module");
@@ -102,12 +106,27 @@ describe("contract · provider verification: marketplace-api", () => {
     app = configureApp(moduleRef.createNestApplication({ bodyParser: false }));
     await app.init();
     await app.listen(PROVIDER_PORT);
+
+    const hash = await testPasswordHash();
+    await pg.dataSource.query(
+      `INSERT INTO users (id, email, role, password_hash)
+       VALUES (1, 'pact-buyer@example.com', 'buyer', $1)
+       ON CONFLICT (id) DO UPDATE SET password_hash = EXCLUDED.password_hash`,
+      [hash],
+    );
+    const login = await request(app.getHttpServer())
+      .post("/auth/login")
+      .send({ email: "pact-buyer@example.com", password: TEST_PASSWORD });
+    if (login.status !== 200 || typeof login.body?.access_token !== "string") {
+      throw new Error(`pact buyer login failed with ${login.status}`);
+    }
+    buyerAccess = login.body.access_token;
   }, 120_000);
 
   afterAll(async () => {
     if (app) await app.close();
     if (pg) await pg.stop();
-    cleanupAuth?.();
+    if (cleanupAuth) await cleanupAuth();
   });
 
   test("all interactions in marketplace-web-marketplace-api.json pass", async () => {
@@ -137,6 +156,15 @@ describe("contract · provider verification: marketplace-api", () => {
         "buyer 1 can purchase product 1": async () => {
           await seedBuyerCanPurchase(pg.dataSource);
         },
+      },
+      requestFilter: (req, _res, next) => {
+        const value = `Bearer ${buyerAccess}`;
+        req.headers.authorization = value;
+        const raw = req.rawHeaders;
+        const at = raw.findIndex((header) => header.toLowerCase() === "authorization");
+        if (at >= 0) raw[at + 1] = value;
+        else raw.push("Authorization", value);
+        next();
       },
       logLevel: "warn",
     }).verifyProvider();
