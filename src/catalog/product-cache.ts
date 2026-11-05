@@ -84,7 +84,8 @@ export async function getProductCardCached(
     }
   }
 
-  for (let i = 0; i < 50; i++) {
+  const deadline = Date.now() + PRODUCT_CACHE_LOCK_PX;
+  while (Date.now() < deadline) {
     await sleep(20);
     const again = await redis.get(key);
     if (again !== null) {
