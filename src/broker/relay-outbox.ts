@@ -1,8 +1,11 @@
 import type { QueryRunner } from "typeorm";
 
+import type { ChannelModel, ConfirmChannel } from "amqplib";
+
 import dataSource from "../data-source";
 import { isBrokerEnabled } from "./broker-enabled";
-import { publishOrderPlacedEvent, type OrderPlacedEvent } from "./publish-order-placed";
+import { connectBroker } from "./connect";
+import { publishOrderPlacedOnChannel, type OrderPlacedEvent } from "./publish-order-placed";
 
 export type RelayOutboxPassOptions = {
   limit?: number;
@@ -40,6 +43,8 @@ export async function relayOutboxPass(options: RelayOutboxPassOptions = {}): Pro
   const limit = options.limit ?? 32;
   const ownRunner = !options.queryRunner;
   const qr = options.queryRunner ?? dataSource.createQueryRunner();
+  let conn: ChannelModel | undefined;
+  let ch: ConfirmChannel | undefined;
 
   if (ownRunner) {
     await qr.connect();
@@ -62,9 +67,12 @@ export async function relayOutboxPass(options: RelayOutboxPassOptions = {}): Pro
       return 0;
     }
 
+    // One connection for the whole batch. A new connect per row holds these locks idle.
+    conn = await connectBroker();
+    ch = await conn.createConfirmChannel();
     for (const row of rows) {
       const event = normalizePayload(row);
-      await publishOrderPlacedEvent(event);
+      await publishOrderPlacedOnChannel(ch, event);
     }
 
     if (options.abortBeforeUpdate) {
@@ -84,6 +92,8 @@ export async function relayOutboxPass(options: RelayOutboxPassOptions = {}): Pro
     if (ownRunner) await qr.rollbackTransaction().catch(() => undefined);
     throw err;
   } finally {
+    await ch?.close().catch(() => undefined);
+    await conn?.close().catch(() => undefined);
     if (ownRunner) await qr.release();
   }
 }
