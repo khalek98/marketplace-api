@@ -6,6 +6,7 @@ import { fork, type ChildProcess } from "node:child_process";
 
 import { closeRedis, createJobsRedis } from "./redis/clients";
 import { SlidingWindowRateLimiter } from "./rate-limit/sliding-window";
+import type Redis from "ioredis";
 
 const LIMIT = 5;
 const WINDOW_MS = 60_000;
@@ -59,6 +60,34 @@ function waitReady(child: ChildProcess): Promise<void> {
   });
 }
 
+async function assertRetryFromOldest(redis: Redis): Promise<void> {
+  const who = "retry-after-probe";
+  const limiter = new SlidingWindowRateLimiter(redis, {
+    limit: LIMIT,
+    windowMs: WINDOW_MS,
+    keyPrefix: "rl:probe",
+  });
+  const key = `rl:probe:${who}`;
+  const now = Date.now();
+  const ageMs = 50_000;
+  for (let i = 0; i < LIMIT; i += 1) {
+    await redis.zadd(key, now - ageMs, `old-${i}`);
+  }
+  await redis.pexpire(key, WINDOW_MS);
+  const decision = await limiter.check(who);
+  const fullWindowSec = WINDOW_MS / 1000;
+  const untilOldestSec = Math.ceil((WINDOW_MS - ageMs) / 1000);
+  if (
+    decision.allowed ||
+    decision.retryAfterSec === null ||
+    decision.retryAfterSec >= fullWindowSec ||
+    decision.retryAfterSec > untilOldestSec + 1
+  ) {
+    throw new Error(`Retry-After should follow the oldest score (~${untilOldestSec}s), got ${decision.retryAfterSec}`);
+  }
+  await redis.del(key);
+}
+
 function ask(child: ChildProcess, id: number): Promise<WorkerDecision> {
   return new Promise((resolve, reject) => {
     const onMessage = (msg: WorkerDecision) => {
@@ -79,6 +108,7 @@ async function main(): Promise<void> {
   try {
     const old = await redis.keys("rl:slide:*");
     if (old.length > 0) await redis.del(...old);
+    await assertRetryFromOldest(redis);
 
     for (let i = 0; i < 2; i += 1) {
       children.push(fork(__filename, [], { env: { ...process.env, RL_WORKER: "1" } }));
