@@ -22,13 +22,13 @@ function resolveBrokerUrl(): string {
 
 async function seedOrder7(ds: DataSource): Promise<void> {
   await ds.query(
-    `INSERT INTO users (id, email, role)
-     VALUES (1, 'pact-buyer@example.com', 'buyer')
+    `INSERT INTO users (id, email, role, password_hash)
+     VALUES (1, 'pact-buyer@example.com', 'buyer', 'unset')
      ON CONFLICT (id) DO NOTHING`,
   );
   await ds.query(
-    `INSERT INTO users (id, email, role)
-     VALUES (2, 'pact-seller@example.com', 'seller')
+    `INSERT INTO users (id, email, role, password_hash)
+     VALUES (2, 'pact-seller@example.com', 'seller', 'unset')
      ON CONFLICT (id) DO NOTHING`,
   );
   await ds.query(
@@ -51,13 +51,13 @@ async function seedOrder7(ds: DataSource): Promise<void> {
 /** Buyer, seller, product and wallet so POST /orders can checkout without a pre-built order. */
 async function seedBuyerCanPurchase(ds: DataSource): Promise<void> {
   await ds.query(
-    `INSERT INTO users (id, email, role)
-     VALUES (1, 'pact-buyer@example.com', 'buyer')
+    `INSERT INTO users (id, email, role, password_hash)
+     VALUES (1, 'pact-buyer@example.com', 'buyer', 'unset')
      ON CONFLICT (id) DO NOTHING`,
   );
   await ds.query(
-    `INSERT INTO users (id, email, role)
-     VALUES (2, 'pact-seller@example.com', 'seller')
+    `INSERT INTO users (id, email, role, password_hash)
+     VALUES (2, 'pact-seller@example.com', 'seller', 'unset')
      ON CONFLICT (id) DO NOTHING`,
   );
   await ds.query(

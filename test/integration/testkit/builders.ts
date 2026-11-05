@@ -3,25 +3,26 @@ import type { DataSource } from "typeorm";
 import { Product } from "../../../src/entities/product.entity";
 import { User } from "../../../src/entities/user.entity";
 import { Wallet } from "../../../src/entities/wallet.entity";
+import { UNUSABLE_PASSWORD_HASH } from "../../../src/auth/password";
 
 let seq = 0;
 
 export class UserBuilder {
   private email = `user-${++seq}@example.com`;
-  private role: "buyer" | "seller" = "buyer";
+  private role: "buyer" | "seller" | "admin" = "buyer";
 
   withEmail(email: string): this {
     this.email = email;
     return this;
   }
 
-  withRole(role: "buyer" | "seller"): this {
+  withRole(role: "buyer" | "seller" | "admin"): this {
     this.role = role;
     return this;
   }
 
-  build(): Pick<User, "email" | "role"> {
-    return { email: this.email, role: this.role };
+  build(): Pick<User, "email" | "role" | "passwordHash"> {
+    return { email: this.email, role: this.role, passwordHash: UNUSABLE_PASSWORD_HASH };
   }
 
   async insert(ds: DataSource): Promise<User> {
