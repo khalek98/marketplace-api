@@ -41,6 +41,8 @@
     "demo:session": "bash scripts/with-secrets.sh dev node dist/demo-session.js",
     "demo:ratelimit": "bash scripts/with-secrets.sh dev node dist/demo-ratelimit.js",
     "demo:queue": "bash scripts/with-secrets.sh dev node dist/demo-queue.js",
+    "demo:auth": "bash scripts/with-secrets.sh dev node dist/demo-auth.js",
+    "demo:reuse": "bash scripts/with-secrets.sh dev node dist/demo-reuse.js",
     "report": "bash scripts/with-secrets.sh dev node dist/report.js"
   },
   "dependencies": {
