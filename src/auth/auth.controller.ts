@@ -7,6 +7,10 @@ type LoginBody = {
   password: string;
 };
 
+type RefreshBody = {
+  refresh_token: string;
+};
+
 @Controller("auth")
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
@@ -15,5 +19,11 @@ export class AuthController {
   @HttpCode(200)
   login(@Body() body: LoginBody) {
     return this.auth.login(body.email, body.password);
+  }
+
+  @Post("refresh")
+  @HttpCode(200)
+  refresh(@Body() body: RefreshBody) {
+    return this.auth.refresh(body.refresh_token);
   }
 }

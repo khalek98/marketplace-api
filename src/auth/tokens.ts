@@ -16,6 +16,8 @@ export const ACCESS_TTL_SEC = 15 * 60;
 /** Idle refresh lifetime. Rotation copies the absolute deadline, not this one. */
 export const REFRESH_IDLE_SEC = 14 * 24 * 60 * 60;
 export const REFRESH_ABSOLUTE_SEC = 30 * 24 * 60 * 60;
+/** Parallel retries of the same refresh get the pair already issued. Past this, reuse kills the family. */
+export const REFRESH_GRACE_MS = 3_000;
 
 export type AccessToken = {
   token: string;

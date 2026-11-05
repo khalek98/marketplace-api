@@ -55,6 +55,41 @@ paths:
         "500":
           $ref: "#/components/responses/InternalServerError"
 
+  /auth/refresh:
+    post:
+      tags:
+        - Auth
+      operationId: refreshSession
+      summary: Rotate a refresh token
+      description: >
+        Marks the presented refresh token used and returns a new pair in the
+        same family. The absolute expiry is copied, not extended. A second use
+        inside a few seconds returns that same new pair. A later reuse revokes
+        every token in the family.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: The new access token and refresh token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: The refresh token is unknown, expired, revoked, or reused.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
   /products:
     get:
       tags:
@@ -397,6 +432,17 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          minLength: 1
+          maxLength: 512
 
     TokenPair:
       type: object
