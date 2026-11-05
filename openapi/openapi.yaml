@@ -90,6 +90,60 @@ paths:
         "500":
           $ref: "#/components/responses/InternalServerError"
 
+  /auth/logout:
+    post:
+      tags:
+        - Auth
+      operationId: logout
+      summary: Log out
+      description: >
+        Revokes every refresh token in this login's family, then denylists the
+        access token's jti until it would have expired. These are two steps.
+        If the denylist write fails the response is not success, and the client
+        retries with the same access token.
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: The refresh family is revoked and the access token is denylisted.
+        "401":
+          description: The access token is missing, expired, or already denylisted.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "503":
+          description: The family was revoked, but the denylist write failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /auth/me:
+    get:
+      tags:
+        - Auth
+      operationId: currentUser
+      summary: Who the access token is
+      description: Requires a valid access token that is not on the denylist.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The subject and role from the access token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUser"
+        "401":
+          description: The access token is missing, expired, or denylisted.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
   /products:
     get:
       tags:
@@ -443,6 +497,22 @@ components:
           type: string
           minLength: 1
           maxLength: 512
+
+    CurrentUser:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - role
+      properties:
+        id:
+          $ref: "#/components/schemas/ResourceId"
+        role:
+          type: string
+          enum:
+            - buyer
+            - seller
+            - admin
 
     TokenPair:
       type: object

@@ -28,10 +28,11 @@ export type AccessToken = {
 export async function issueAccessToken(
   keys: SigningMaterial,
   user: { id: string; role: string },
+  familyId: string,
 ): Promise<AccessToken> {
   const jti = randomUUID();
   const { SignJWT } = await loadJose();
-  const token = await new SignJWT({ role: user.role })
+  const token = await new SignJWT({ role: user.role, family_id: familyId })
     .setProtectedHeader({ alg: "ES256", kid: keys.kid })
     .setSubject(user.id)
     .setIssuer(ISSUER)
@@ -51,7 +52,7 @@ export async function issueAccessToken(
 export async function verifyAccessToken(
   keys: SigningMaterial,
   token: string,
-): Promise<{ sub: string; role: string; jti: string; exp: number }> {
+): Promise<{ sub: string; role: string; jti: string; exp: number; familyId: string }> {
   const { jwtVerify } = await loadJose();
   const { payload, protectedHeader } = await jwtVerify(token, keys.publicKey, {
     algorithms: ["ES256"],
@@ -65,10 +66,11 @@ export async function verifyAccessToken(
     throw new Error("access token is missing sub, jti, or exp");
   }
   const role = payload.role;
-  if (typeof role !== "string") {
-    throw new Error("access token is missing role");
+  const familyId = payload.family_id;
+  if (typeof role !== "string" || typeof familyId !== "string") {
+    throw new Error("access token is missing role or family_id");
   }
-  return { sub: payload.sub, role, jti: payload.jti, exp: payload.exp };
+  return { sub: payload.sub, role, jti: payload.jti, exp: payload.exp, familyId };
 }
 
 /** 32 random bytes. This string is what the client keeps. The database stores the HMAC. */
@@ -82,4 +84,13 @@ export function hashRefreshToken(pepper: string, token: string): string {
 
 export function newFamilyId(): string {
   return randomUUID();
+}
+
+export function denyKey(issuer: string, jti: string): string {
+  return `deny:${issuer}:${jti}`;
+}
+
+/** Seconds the denylist entry may live. Never longer than the access token, never forever. */
+export function denyTtlSec(exp: number, nowMs = Date.now()): number {
+  return Math.floor(exp - nowMs / 1000);
 }

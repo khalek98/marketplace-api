@@ -3,6 +3,7 @@ import type { Request } from "express";
 
 import { ApplicationError } from "../common/errors/application-error";
 import { verifyAccessToken } from "./tokens";
+import { Denylist } from "./denylist";
 import { SigningKeysService } from "./signing-keys.service";
 
 export type AccessPrincipal = {
@@ -10,13 +11,17 @@ export type AccessPrincipal = {
   role: string;
   jti: string;
   exp: number;
+  familyId: string;
 };
 
 export type RequestWithPrincipal = Request & { principal?: AccessPrincipal };
 
 @Injectable()
 export class AccessTokenGuard implements CanActivate {
-  constructor(private readonly signing: SigningKeysService) {}
+  constructor(
+    private readonly signing: SigningKeysService,
+    private readonly denylist: Denylist,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<RequestWithPrincipal>();
@@ -27,11 +32,17 @@ export class AccessTokenGuard implements CanActivate {
     }
 
     const keys = this.signing.material();
+    let principal: AccessPrincipal;
     try {
-      req.principal = await verifyAccessToken(keys, token);
+      principal = await verifyAccessToken(keys, token);
     } catch {
       throw unauthorized();
     }
+    // Signature first. A garbage token never touches Redis.
+    if (await this.denylist.has(principal.jti)) {
+      throw unauthorized();
+    }
+    req.principal = principal;
     return true;
   }
 }

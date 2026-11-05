@@ -6,10 +6,12 @@ import type { SigningMaterial } from "../config/signing-keys";
 import dataSource from "../data-source";
 import { RefreshToken } from "../entities/refresh-token.entity";
 import { User } from "../entities/user.entity";
+import { Denylist } from "./denylist";
 import { hashPassword, verifyPassword } from "./password";
 import { SigningKeysService } from "./signing-keys.service";
 import {
   ACCESS_TTL_SEC,
+  denyTtlSec,
   hashRefreshToken,
   issueAccessToken,
   newFamilyId,
@@ -53,7 +55,10 @@ export class AuthService implements OnModuleInit {
   /** Raw successor pair for a refresh hash, kept only for the grace window. */
   private readonly grace = new Map<string, LoginResult>();
 
-  constructor(private readonly signing: SigningKeysService) {}
+  constructor(
+    private readonly signing: SigningKeysService,
+    private readonly denylist: Denylist,
+  ) {}
 
   async onModuleInit(): Promise<void> {
     if (!dataSource.isInitialized) {
@@ -75,13 +80,14 @@ export class AuthService implements OnModuleInit {
     }
 
     const keys = this.signing.material();
-    const access = await issueAccessToken(keys, user);
+    const familyId = newFamilyId();
+    const access = await issueAccessToken(keys, user, familyId);
     const refreshToken = newRefreshToken();
     const now = Date.now();
 
     await dataSource.getRepository(RefreshToken).save(
       dataSource.getRepository(RefreshToken).create({
-        familyId: newFamilyId(),
+        familyId,
         userId: user.id,
         tokenHash: hashRefreshToken(keys.pepper, refreshToken),
         usedAt: null,
@@ -108,6 +114,31 @@ export class AuthService implements OnModuleInit {
       return rotated;
     }
     return this.rejectOrReplay(hash);
+  }
+
+  async logout(principal: { familyId: string; jti: string; exp: number }): Promise<void> {
+    await dataSource.transaction(async (manager) => {
+      await manager.query(
+        `UPDATE refresh_tokens
+            SET revoked_at = now()
+          WHERE family_id = $1
+            AND revoked_at IS NULL`,
+        [principal.familyId],
+      );
+    });
+
+    const ttlSec = denyTtlSec(principal.exp);
+    if (ttlSec < 1) return;
+    try {
+      await this.denylist.revoke(principal.jti, ttlSec);
+    } catch {
+      throw new ApplicationError(
+        503,
+        "Logout incomplete",
+        "The refresh family is revoked, but the access token could not be denylisted. Retry logout.",
+        "denylist-unavailable",
+      );
+    }
   }
 
   /**
@@ -156,7 +187,7 @@ export class AuthService implements OnModuleInit {
       [row.family_id, user.id, hashRefreshToken(keys.pepper, next), idleEnd < absolute ? idleEnd : absolute, absolute],
     );
 
-    const access = await issueAccessToken(keys, user);
+    const access = await issueAccessToken(keys, user, row.family_id);
     return {
       access_token: access.token,
       refresh_token: next,

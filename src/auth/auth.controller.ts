@@ -1,5 +1,6 @@
-import { Body, Controller, HttpCode, Post } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Post, Req, UseGuards } from "@nestjs/common";
 
+import { AccessTokenGuard, RequestWithPrincipal } from "./access-token.guard";
 import { AuthService } from "./auth.service";
 
 type LoginBody = {
@@ -25,5 +26,18 @@ export class AuthController {
   @HttpCode(200)
   refresh(@Body() body: RefreshBody) {
     return this.auth.refresh(body.refresh_token);
+  }
+
+  @Post("logout")
+  @HttpCode(204)
+  @UseGuards(AccessTokenGuard)
+  logout(@Req() req: RequestWithPrincipal): Promise<void> {
+    return this.auth.logout(req.principal!);
+  }
+
+  @Get("me")
+  @UseGuards(AccessTokenGuard)
+  me(@Req() req: RequestWithPrincipal) {
+    return { id: req.principal!.sub, role: req.principal!.role };
   }
 }
