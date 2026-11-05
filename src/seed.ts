@@ -23,6 +23,10 @@ const PRODUCTS = [
   { name: "Race Test", description: "товар для тестування race", priceCents: 1000, stockQty: 10 },
 ];
 
+/** Extra catalog SKUs so cache demos can warm ≥50 distinct product cards. */
+const CATALOG_EXTRA = 50;
+const REVIEWS_PER_PRODUCT = 800;
+
 const ORDER_COUNT = 10;
 
 async function upsertUser(email: string, role: User["role"]): Promise<User> {
@@ -69,12 +73,14 @@ async function upsertProduct(seller: User, spec: (typeof PRODUCTS)[number]): Pro
 }
 
 async function countRows(): Promise<Record<string, number>> {
+  const reviews = Number((await dataSource.query(`SELECT count(*)::int AS n FROM reviews`))[0]?.n ?? 0);
   return {
     users: await dataSource.getRepository(User).count(),
     products: await dataSource.getRepository(Product).count(),
     orders: await dataSource.getRepository(Order).count(),
     order_items: await dataSource.getRepository(OrderItem).count(),
     wallets: await dataSource.getRepository(Wallet).count(),
+    reviews,
   };
 }
 
@@ -103,6 +109,33 @@ async function main() {
   for (let i = 0; i < PRODUCTS.length; i++) {
     const seller = sellers[i % sellers.length];
     products.push(await upsertProduct(seller, PRODUCTS[i]));
+  }
+  for (let i = 1; i <= CATALOG_EXTRA; i++) {
+    const seller = sellers[i % sellers.length];
+    products.push(
+      await upsertProduct(seller, {
+        name: `Catalog #${i}`,
+        description: `seed catalog item ${i} for cache demos`,
+        priceCents: 1000 + i * 17,
+        stockQty: 20 + (i % 30),
+      }),
+    );
+  }
+
+  const reviewCount = Number((await dataSource.query(`SELECT count(*)::int AS n FROM reviews`))[0]?.n ?? 0);
+  const expectedReviews = products.length * REVIEWS_PER_PRODUCT;
+  if (reviewCount < expectedReviews) {
+    await dataSource.query(`TRUNCATE reviews RESTART IDENTITY`);
+    await dataSource.query(
+      `INSERT INTO reviews (product_id, rating)
+       SELECT p.id, 1 + (random() * 4)::int
+       FROM products p, generate_series(1, $1)`,
+      [REVIEWS_PER_PRODUCT],
+    );
+    await dataSource.query(`ANALYZE reviews`);
+    console.log(`seed: reviews refreshed (${expectedReviews} rows target)`);
+  } else {
+    console.log(`seed: reviews already present (${reviewCount}) — skip`);
   }
 
   const buyerEmails = buyers.map((b) => b.email);

@@ -11,6 +11,7 @@ import {
 } from "typeorm";
 
 import { OrderItem } from "./order-item.entity";
+import { Review } from "./review.entity";
 import { User } from "./user.entity";
 
 @Entity("products")
@@ -62,4 +63,7 @@ export class Product {
 
   @OneToMany(() => OrderItem, (item) => item.product)
   orderItems!: OrderItem[];
+
+  @OneToMany(() => Review, (review) => review.product)
+  reviews!: Review[];
 }

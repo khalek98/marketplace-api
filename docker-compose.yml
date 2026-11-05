@@ -109,5 +109,43 @@ services:
       timeout: 3s
       retries: 30
 
+  # Two Redis processes on purpose. Cache wants maxmemory + allkeys-lru; BullMQ
+  # docs require noeviction (keys must not vanish under pressure). Those are
+  # incompatible on one process — maxmemory is per instance, and SELECT 1 does
+  # not split policies. Ports 21140/21141 stay outside the lecture range 22300–22399.
+  redis:
+    image: redis:8-alpine
+    ports:
+      - "21140:6379"
+    command:
+      - "redis-server"
+      - "--maxmemory"
+      - "64mb"
+      - "--maxmemory-policy"
+      - "allkeys-lru"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis-jobs:
+    image: redis:8-alpine
+    ports:
+      - "21141:6379"
+    command:
+      - "redis-server"
+      - "--maxmemory-policy"
+      - "noeviction"
+      - "--appendonly"
+      - "yes"
+      - "--appendfsync"
+      - "everysec"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
 volumes:
   pgdata-restore:

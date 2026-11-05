@@ -46,7 +46,7 @@ User stories:
 
 - **NestJS modular monolith** — хочу вивчити фреймворк курсу на одному deployable сервісі з модулями каталогу, замовлень, користувачів і подій. Express 4 був лише contract adapter у HW-09; зараз рантайм — Nest (див. журнал).
 - **PostgreSQL** — перша серйозна SQL-база після MongoDB; checkout + декремент stock потребують ACID-транзакції.
-- **Redis** — cache каталогу і idempotency keys з TTL; не source of truth.
+- **Redis** — два інстанси: кеш (`allkeys-lru`) і черга/сесії/rate-limit (`noeviction`); не source of truth.
 - **Outbox** — `order.placed` пишеться разом із замовленням; worker публікує в чергу, споживачі ідемпотентні.
 - **S3** — зображення через presigned URL; у БД лише метадані.
 - **Секрети через** `process.env` **+ zod** — Nest не знає про Infisical/Vault; хто завгодно може подати змінні (`.env`, Infisical, cloud SM, K8s). Креденшели Postgres — окремо у файлі `secrets/db_auth` (ротація без рестарту, alternating users).
@@ -81,12 +81,11 @@ User stories:
 - Платежі: зараз mock + контракт webhook; далі **LiqPay**. Обрав його через явний sandbox (`sandbox: 1`), callback на `server_url` з підписом і наявність NestJS-friendly інтеграцій — зручно відпрацювати підтвердження оплати без живих грошей і без зміни HW-09 контракту.
 - Guest mode: read-only каталог без checkout.
 - Admin API: модерація, користувачі, базові звіти.
-- Auth / RBAC на ресурсах (seller — лише свої товари).
-- Redis cache-aside для каталогу + sessions / rate-limit / BullMQ (поверх тієї ж події `order.placed`).
+- Auth / RBAC на ресурсах (seller — лише свої товари). JWT / denylist поверх Redis-сесій — наступні ДЗ.
 
 ## Запуск
 
-Потрібен Node.js ≥ 22. `docker compose` піднімає Postgres, PgBouncer, RabbitMQ і (за потреби) Pact Broker; Nest — на хості через `npm`. Infisical для цього шляху не потрібен.
+Потрібен Node.js ≥ 22. `docker compose` піднімає Postgres, PgBouncer, RabbitMQ, два Redis (кеш + черга) і (за потреби) Pact Broker; Nest — на хості через `npm`. Infisical для цього шляху не потрібен.
 
 ```bash
 cp .env.example .env
@@ -247,6 +246,57 @@ npm run demo:crash-relay
 | `demo:crash-write` | `write-failed=1` `orders=0` `outbox=0` `published=0` `deliveries=0` `effect=0`           |
 | `demo:crash-relay` | `published=1` `deliveries=2` `applied=1` `effect=1` `processed=1`                        |
 
+## Redis: кеш, сесії, ліміти, черга
+
+Postgres лишається джерелом правди. Redis тут робить систему **швидшою**, не «правильнішою»: відмовляємось від повторних важких читань, тримаємо короткоживучий стан між запитами, ділимо ліміт між подами й виносимо повільну роботу з HTTP.
+
+Два контейнери навмисно. Кеш потребує `maxmemory` + `allkeys-lru` (під тиском витісняє ключі). BullMQ у документації вимагає `noeviction` — інакше черга може втратити свої структури. `maxmemory-policy` одна на весь процес Redis, тож `SELECT 1` політики не розводить. Порти стенда: кеш **21140**, черга **21141** (поза діапазоном лекції `22300–22399`).
+
+Сесії / token-state і HTTP rate-limit лежать на **queue-Redis** (`REDIS_QUEUE_URL`). У кеш-інстансі з LRU сесію колись викине без відтворюваного «розлогіну»; лічильник ліміту теж не повинен зникати під eviction.
+
+Важке читання для кешу — `product_projection`: картка товару + середній рейтинг по `reviews` (походи в БД пише сама функція в `db_calls`). Cache-aside з TTL **і** jitter (`300 + random(0..60)` с); на промаху — single-flight лок (`SET NX` + Lua compare-and-delete).
+
+Якщо stampede-лок зламається і двоє одночасно вирішать, що він у них: будуть **два однакові SELECT** у Postgres, стан домену не зіпсується. Тому лок тут — оптимізація (efficiency), не захист інваріанта. Для грошей/залишку як і раніше потрібні транзакції / унікальні ключі / ідемпотентність, не Redis-лок.
+
+Rate-limit: ковзне вікно (Lua + ZSET) у спільному Redis — без сплеску до 2× на межі фіксованого вікна; перевищення → `429` + `Retry-After`.
+
+BullMQ на queue-Redis: retry з exponential backoff + jitter, дедуп по `jobId` (без `removeOnComplete: true`), планувальник через `upsertJobScheduler`.
+
+З нуля на іншій машині:
+
+```bash
+docker compose down -v
+cp secrets/db_auth.example secrets/db_auth
+docker compose up -d --wait
+
+export SKIP_VAULT=1
+export DB_HOST=127.0.0.1 DB_PORT=21111 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
+export BROKER_URL=amqp://app:app@127.0.0.1:21130
+export REDIS_URL=redis://127.0.0.1:21140
+export REDIS_QUEUE_URL=redis://127.0.0.1:21141
+
+npm ci
+npm run build
+npm run migrate
+npm run seed
+
+npm run demo:cache
+npm run demo:session
+npm run demo:ratelimit
+npm run demo:queue
+```
+
+Прогін на цьому стенді (2026-11-04):
+
+| Демо             | Результат                                                                                                      |
+| ---------------- | -------------------------------------------------------------------------------------------------------------- |
+| `demo:cache`     | `cache-lru=1` `cache-maxmemory=1` `warmed=50` `ttl-distinct=35` `concurrent=25` `db-calls=1` `db-calls-warm=0` |
+| `demo:session`   | `requests=3` `sessions=1` `in-redis=1` `ttl-renewed=1`                                                         |
+| `demo:ratelimit` | `instances=2` `limit=5` `requests=12` `allowed=5` `blocked=7` `status=429` `retry-after=1`                     |
+| `demo:queue`     | `queue-noeviction=1` `attempts=4` `completed=1` `added=2` `queued=1` `schedulers=1` `scheduled-runs=2`         |
+
+Швидка перевірка зʼєднань без демо: `npm run redis:ping`.
+
 ## Configuration
 
 Конфіг проходить fail-fast через zod (`src/config/env.schema.ts`) і `ConfigModule.validate`. Nest читає лише `process.env` — йому байдуже, хто підставив значення (`.env`, Infisical, інший secret manager).
@@ -264,10 +314,14 @@ npm run demo:crash-relay
 | `PORT`               | так                           | HTTP-порт API                                                                                                                                                                                   |
 | `DB_URL`             | так                           | host/port/db для пулу. **Джерело: сховище** (локально gitignored `.env`; optional Infisical). User/password з URL ігноруються — з `secrets/db_auth`. У git лише фейковий рядок у `.env.example` |
 | `BROKER_URL`         | так                           | AMQP-адреса RabbitMQ (`amqp://…:21130`). **Джерело: сховище** (той самий шлях, що й `DB_URL`). Порт `21131` — лише management UI, не цей URL                                                    |
+| `REDIS_URL`          | так                           | Redis під **кеш** (`redis://…:21140`, `allkeys-lru`). **Джерело: сховище** (той самий шлях, що й `DB_URL`)                                                                                      |
+| `REDIS_QUEUE_URL`    | так                           | Redis під **чергу / сесії / rate-limit** (`redis://…:21141`, `noeviction`). Окремий інстанс — не `REDIS_URL`                                                                                    |
 | `CURSOR_HMAC_SECRET` | так                           | HMAC для cursor пагінації (без дефолту в схемі — має прийти ззовні)                                                                                                                             |
 | `DB_AUTH_FILE`       | ні (дефолт `secrets/db_auth`) | Шлях до файла з role + password Postgres (два рядки)                                                                                                                                            |
 | `LOG_LEVEL`          | ні (`info`)                   | `debug` \| `info` \| `warn` \| `error`                                                                                                                                                          |
 | `TIMEOUT_MS`         | ні (`5000`)                   | Таймаут зовнішніх викликів, мс                                                                                                                                                                  |
+
+HTTP rate-limit: **ковзне вікно** в Redis (Lua + ZSET) — не дозволяємо сплеск до 2× ліміту на межі фіксованого вікна; лічильник спільний для всіх подів.
 
 ### Ротація пароля БД без рестарту
 
@@ -591,10 +645,12 @@ CI: `.github/workflows/contract.yml` — job `contract` робить publish →
 docker compose up -d --wait
 export DB_HOST=127.0.0.1 DB_PORT=21111 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
 export BROKER_URL=amqp://app:app@127.0.0.1:21130
+export REDIS_URL=redis://127.0.0.1:21140
+export REDIS_QUEUE_URL=redis://127.0.0.1:21141
 export SKIP_VAULT=1    # у грейдера немає доступу до сховища
 ```
 
-`DB_PORT=21111` — опублікований порт **PgBouncer** (прямий Postgres лишається на `21110`). `BROKER_URL` — AMQP на `21130` (не management UI на `21131`).
+`DB_PORT=21111` — опублікований порт **PgBouncer** (прямий Postgres лишається на `21110`). `BROKER_URL` — AMQP на `21130` (не management UI на `21131`). `REDIS_URL` — кеш на `21140`; `REDIS_QUEUE_URL` — черга/сесії на `21141` (різні інстанси).
 
 Далі (ORM / concurrency): `npm ci && npx tsc --noEmit`, `npm run build && npm run migrate && npm run migrate:show`, `npm run migrate:revert && npm run migrate`, `npm run seed && npm run seed`, `npm run demo:nplus1`, `npm run report`, `npm run demo:race`, `npm run demo:workers`, `npm run demo:retry`.
 
@@ -602,7 +658,9 @@ Async-події (RabbitMQ уже в `docker compose up -d --wait` вище): `n
 
 Outbox + ідемпотентність (після `npm run build && npm run migrate && npm run seed`): `npm run demo:outbox`, `npm run demo:crash-write`, `npm run demo:crash-relay`. Числа й обґрунтування — у секції [Outbox та ідемпотентність](#outbox-та-ідемпотентність).
 
-Realtime — після `npm run build && npm run migrate && npm run seed`. У шелі API ще `set -a && source .env && set +a` (або ті самі `export` + `BROKER_URL`) і `npm start`. У другому терміналі: `node scripts/realtime-demo.mjs` і `node scripts/realtime-demo.mjs --same-room`. Потік `text/event-stream` і `Last-Event-ID` — у секції [Realtime](#realtime).
+Redis (після `npm run build && npm run migrate && npm run seed`; Redis уже в `docker compose up -d --wait`): `npm run demo:cache`, `npm run demo:session`, `npm run demo:ratelimit`, `npm run demo:queue`. Числа й обґрунтування — у секції [Redis: кеш, сесії, ліміти, черга](#redis-кеш-сесії-ліміти-черга).
+
+Realtime — після `npm run build && npm run migrate && npm run seed`. У шелі API ще `set -a && source .env && set +a` (або ті самі `export` + `BROKER_URL` / Redis URL) і `npm start`. У другому терміналі: `node scripts/realtime-demo.mjs` і `node scripts/realtime-demo.mjs --same-room`. Потік `text/event-stream` і `Last-Event-ID` — у секції [Realtime](#realtime).
 
 Бекап і restore-drill (після того як у БД є дані — хоча б після `seed`). Дамп іде на прямий Postgres, не на порт застосунку:
 
@@ -696,4 +754,5 @@ docker compose -f infisical/docker-compose.yml down
 - **2026-10-13 (HW-18):** realtime на двох транспортах з однієї шини (`OrderEventsService`). Для стрічки статусу замовлення в проді лишаю SSE; socket.io — для `join`/кімнат, де клієнт теж пише в канал.
 - **2026-10-14 (HW-19):** async `order.placed` через RabbitMQ (topic `shop.events`, quorum + DLQ, ручний ack, `prefetch=20`, ідемпотентні `order_notifications`). Публікація після checkout COMMIT — dual write до outbox лишається відкритим.
 - **2026-11-04 (HW-22):** transactional outbox у тій самій TX, що checkout; relay зі `SKIP LOCKED`; inbox `processed_messages` + `Idempotency-Key` у `api_requests`; демо `demo:outbox|crash-write|crash-relay`. Dual write між Postgres і брокером закрито at-least-once + ідемпотентним ефектом.
+- **2026-11-04 (HW-23):** два Redis (кеш `allkeys-lru` :21140, черга `noeviction` :21141); cache-aside + jitter + single-flight; сесії й rate-limit на queue-Redis; BullMQ (retry, `jobId`, `upsertJobScheduler`); демо `demo:cache|session|ratelimit|queue`.
 - Наступні зміни архітектури додаються сюди з причиною та наслідками, а не приховуються переписуванням історії.
