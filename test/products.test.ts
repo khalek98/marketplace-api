@@ -1,13 +1,17 @@
 import { INestApplication } from "@nestjs/common";
 import request from "supertest";
 import { randomUUID } from "node:crypto";
-import { assertProblemJson } from "./helpers";
-import { createHttpApp, stopHttpDatabase } from "./http-app";
+import { aUser } from "./integration/testkit/builders";
+import { assertProblemJson, loginAccessToken } from "./helpers";
+import { bootHttpDatabase, createHttpApp, stopHttpDatabase } from "./http-app";
 
 let app: INestApplication;
+let sellerToken: string;
 
 beforeAll(async () => {
   app = await createHttpApp();
+  const seller = await aUser().withRole("seller").insert(await bootHttpDatabase());
+  sellerToken = await loginAccessToken(app, seller.email);
 });
 
 afterAll(async () => {
@@ -58,7 +62,10 @@ describe("GET /products", () => {
 describe("PATCH /products/{productId}", () => {
   it("returns 200 with updated fields", async () => {
     const name = `Updated Webcam ${randomUUID()}`;
-    const res = await request(app.getHttpServer()).patch("/products/product_webcam").send({
+    const res = await request(app.getHttpServer())
+      .patch("/products/product_webcam")
+      .set("Authorization", `Bearer ${sellerToken}`)
+      .send({
       name,
     });
 
@@ -70,7 +77,10 @@ describe("PATCH /products/{productId}", () => {
   });
 
   it("returns 409 problem+json when an archived product catalog field is patched", async () => {
-    const res = await request(app.getHttpServer()).patch("/products/product_archived").send({
+    const res = await request(app.getHttpServer())
+      .patch("/products/product_archived")
+      .set("Authorization", `Bearer ${sellerToken}`)
+      .send({
       name: "Should not apply",
     });
 
@@ -81,7 +91,10 @@ describe("PATCH /products/{productId}", () => {
   });
 
   it("returns 422 problem+json when an active product is left with zero stock", async () => {
-    const res = await request(app.getHttpServer()).patch("/products/product_lamp").send({
+    const res = await request(app.getHttpServer())
+      .patch("/products/product_lamp")
+      .set("Authorization", `Bearer ${sellerToken}`)
+      .send({
       stock_qty: 0,
     });
 
@@ -92,7 +105,10 @@ describe("PATCH /products/{productId}", () => {
   });
 
   it("returns 404 problem+json when product is not found", async () => {
-    const res = await request(app.getHttpServer()).patch("/products/product_does_not_exist").send({
+    const res = await request(app.getHttpServer())
+      .patch("/products/product_does_not_exist")
+      .set("Authorization", `Bearer ${sellerToken}`)
+      .send({
       name: "Missing product",
     });
 

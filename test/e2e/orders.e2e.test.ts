@@ -7,7 +7,7 @@ import type { DataSource } from "typeorm";
 
 import { Product } from "../../src/entities/product.entity";
 import { Wallet } from "../../src/entities/wallet.entity";
-import { assertProblemJson, postOrder } from "../helpers";
+import { assertProblemJson, loginAccessToken, postOrder } from "../helpers";
 import { aProduct, aUser, aWallet } from "../integration/testkit/builders";
 import { applyNestTestEnv } from "../integration/testkit/nest-env";
 import { MarketplacePg, startMarketplacePg, truncateData } from "../integration/testkit/pg";
@@ -23,12 +23,12 @@ describe("e2e · orders", () => {
   let pg: MarketplacePg;
   let ds: DataSource;
   let app: INestApplication;
-  let cleanupAuth: () => void;
+  let cleanupAuth: () => Promise<void>;
 
   beforeAll(async () => {
     pg = await startMarketplacePg("(e2e)");
     ds = pg.dataSource;
-    ({ cleanup: cleanupAuth } = applyNestTestEnv());
+    ({ cleanup: cleanupAuth } = await applyNestTestEnv());
 
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { AppModule } = require("../../src/app.module") as typeof import("../../src/app.module");
@@ -50,7 +50,7 @@ describe("e2e · orders", () => {
   afterAll(async () => {
     if (app) await app.close();
     if (pg) await pg.stop();
-    cleanupAuth?.();
+    if (cleanupAuth) await cleanupAuth();
   });
 
   test("happy path: POST /orders → 201 Location, GET → 200 same body; stock and wallet drop", async () => {
@@ -64,8 +64,10 @@ describe("e2e · orders", () => {
       .withStock(5)
       .insert(ds);
 
+    const token = await loginAccessToken(app, buyer.email);
     const created = await postOrder(app, {
       key: `e2e-create-${randomUUID()}`,
+      token,
       body: {
         buyer_id: buyer.id,
         items: [{ product_id: product.id, quantity: 2 }],
@@ -87,7 +89,10 @@ describe("e2e · orders", () => {
       ],
     });
 
-    const fetched = await request(app.getHttpServer()).get(created.headers.location).expect(200);
+    const fetched = await request(app.getHttpServer())
+      .get(created.headers.location)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
     expect(fetched.body).toEqual(created.body);
 
     const stock = await ds.getRepository(Product).findOneByOrFail({ id: product.id });
@@ -97,7 +102,11 @@ describe("e2e · orders", () => {
   });
 
   test("GET /orders/999999999 → 404 problem+json", async () => {
-    const res = await request(app.getHttpServer()).get("/orders/999999999");
+    const buyer = await aUser().withRole("buyer").insert(ds);
+    const token = await loginAccessToken(app, buyer.email);
+    const res = await request(app.getHttpServer())
+      .get("/orders/999999999")
+      .set("Authorization", `Bearer ${token}`);
 
     expect(res.status).toBe(404);
     assertProblemJson(res);

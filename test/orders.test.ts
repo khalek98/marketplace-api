@@ -7,11 +7,12 @@ import request from "supertest";
 
 import { signBuyerToken } from "../src/orders/buyer-token";
 import { aProduct, aUser, aWallet } from "./integration/testkit/builders";
-import { assertProblemJson, postOrder } from "./helpers";
+import { assertProblemJson, loginAccessToken, postOrder } from "./helpers";
 import { bootHttpDatabase, createHttpApp, stopHttpDatabase } from "./http-app";
 
 let app: INestApplication;
 let buyerId: string;
+let buyerToken: string;
 let keyboardId: string;
 let mouseId: string;
 let standId: string;
@@ -24,6 +25,7 @@ beforeAll(async () => {
   const buyer = await aUser().withRole("buyer").insert(ds);
   await aWallet().forUser(buyer.id).withBalance(500_000).insert(ds);
   buyerId = buyer.id;
+  buyerToken = await loginAccessToken(app, buyer.email);
   keyboardId = (await aProduct().forSeller(seller.id).withStock(20).insert(ds)).id;
   mouseId = (await aProduct().forSeller(seller.id).withStock(20).insert(ds)).id;
   standId = (await aProduct().forSeller(seller.id).withStock(20).insert(ds)).id;
@@ -37,6 +39,7 @@ afterAll(async () => {
 describe("POST /orders", () => {
   it("returns 400 problem+json when Idempotency-Key is missing", async () => {
     const res = await postOrder(app, {
+      token: buyerToken,
       body: { buyer_id: buyerId, items: [{ product_id: keyboardId, quantity: 1 }] },
     });
 
@@ -49,6 +52,7 @@ describe("POST /orders", () => {
   it("returns 400 problem+json when items is empty", async () => {
     const res = await postOrder(app, {
       key: `empty-items-${randomUUID()}`,
+      token: buyerToken,
       body: { buyer_id: buyerId, items: [] },
     });
 
@@ -60,6 +64,7 @@ describe("POST /orders", () => {
   it("returns 201 with Location on valid request", async () => {
     const res = await postOrder(app, {
       key: `create-${randomUUID()}`,
+      token: buyerToken,
       body: { buyer_id: buyerId, items: [{ product_id: keyboardId, quantity: 1 }] },
     });
 
@@ -76,11 +81,11 @@ describe("POST /orders", () => {
     const key = `replay-${randomUUID()}`;
     const body = { buyer_id: buyerId, items: [{ product_id: mouseId, quantity: 1 }] };
 
-    const first = await postOrder(app, { key, body });
+    const first = await postOrder(app, { key, body, token: buyerToken });
     expect(first.status).toBe(201);
     const firstOrder = first.body;
 
-    const replay = await postOrder(app, { key, body });
+    const replay = await postOrder(app, { key, body, token: buyerToken });
     expect(replay.status).toBe(201);
     expect(replay.headers["idempotency-replay"]).toBe("true");
     expect(replay.headers["location"]).toBe(first.headers["location"]);
@@ -93,12 +98,14 @@ describe("POST /orders", () => {
 
     const first = await postOrder(app, {
       key,
+      token: buyerToken,
       body: { buyer_id: buyerId, items: [{ product_id: standId, quantity: 1 }] },
     });
     expect(first.status).toBe(201);
 
     const conflict = await postOrder(app, {
       key,
+      token: buyerToken,
       body: { buyer_id: buyerId, items: [{ product_id: keyboardId, quantity: 1 }] },
     });
     expect(conflict.status).toBe(422);
@@ -110,18 +117,23 @@ describe("GET /orders/{orderId}", () => {
   it("returns 200 with the created order", async () => {
     const created = await postOrder(app, {
       key: `get-order-${randomUUID()}`,
+      token: buyerToken,
       body: { buyer_id: buyerId, items: [{ product_id: keyboardId, quantity: 1 }] },
     });
     expect(created.status).toBe(201);
     const order = created.body;
 
-    const res = await request(app.getHttpServer()).get(`/orders/${order.id}`);
+    const res = await request(app.getHttpServer())
+      .get(`/orders/${order.id}`)
+      .set("Authorization", `Bearer ${buyerToken}`);
     expect(res.status).toBe(200);
     expect(res.body).toEqual(order);
   });
 
   it("returns 404 problem+json when order is not found", async () => {
-    const res = await request(app.getHttpServer()).get("/orders/999999999");
+    const res = await request(app.getHttpServer())
+      .get("/orders/999999999")
+      .set("Authorization", `Bearer ${buyerToken}`);
 
     expect(res.status).toBe(404);
     assertProblemJson(res);
@@ -132,6 +144,7 @@ describe("GET /orders/{orderId}/events", () => {
   it("returns 401 without a buyer token and 403 for another buyer", async () => {
     const created = await postOrder(app, {
       key: `events-auth-${randomUUID()}`,
+      token: buyerToken,
       body: { buyer_id: buyerId, items: [{ product_id: keyboardId, quantity: 1 }] },
     });
     expect(created.status).toBe(201);
@@ -152,6 +165,7 @@ describe("GET /orders/{orderId}/events", () => {
   it("streams to the owner and refuses join that only claims a buyerId", async () => {
     const created = await postOrder(app, {
       key: `events-owner-${randomUUID()}`,
+      token: buyerToken,
       body: { buyer_id: buyerId, items: [{ product_id: mouseId, quantity: 1 }] },
     });
     expect(created.status).toBe(201);

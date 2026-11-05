@@ -4,7 +4,7 @@ import type { SigningMaterial } from "../config/signing-keys";
 
 function loadJose() {
   // Static `import` of jose is rejected: this project emits CommonJS.
-  // Node 22 runs the dynamic import, and the module loader caches it.
+  // Node 22 runs the dynamic import. Jest needs --experimental-vm-modules (the test scripts set it).
   return import("jose");
 }
 

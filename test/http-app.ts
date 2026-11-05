@@ -6,6 +6,7 @@ import { applyNestTestEnv } from "./integration/testkit/nest-env";
 import { MarketplacePg, startMarketplacePg } from "./integration/testkit/pg";
 
 let pg: MarketplacePg | undefined;
+let cleanupAuth: (() => Promise<void>) | undefined;
 
 /**
  * Postgres for one HTTP suite file. Jest isolates modules, so each file boots its own.
@@ -14,7 +15,7 @@ let pg: MarketplacePg | undefined;
 export async function bootHttpDatabase(): Promise<DataSource> {
   if (!pg) {
     pg = await startMarketplacePg("(http)");
-    applyNestTestEnv();
+    ({ cleanup: cleanupAuth } = await applyNestTestEnv());
   } else if (!pg.dataSource.isInitialized) {
     await pg.dataSource.initialize();
   }
@@ -22,6 +23,10 @@ export async function bootHttpDatabase(): Promise<DataSource> {
 }
 
 export async function stopHttpDatabase(): Promise<void> {
+  if (cleanupAuth) {
+    await cleanupAuth();
+    cleanupAuth = undefined;
+  }
   if (!pg) return;
   const current = pg;
   pg = undefined;

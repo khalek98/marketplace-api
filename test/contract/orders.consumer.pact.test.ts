@@ -19,7 +19,11 @@ describe("contract · consumer: marketplace-web ↔ marketplace-api", () => {
     provider
       .given("order 7 exists")
       .uponReceiving("a request for order 7")
-      .withRequest({ method: "GET", path: "/orders/7" })
+      .withRequest({
+        method: "GET",
+        path: "/orders/7",
+        headers: { Authorization: regex("^Bearer .+$", "Bearer example") },
+      })
       .willRespondWith({
         status: 200,
         headers: {
@@ -46,7 +50,9 @@ describe("contract · consumer: marketplace-web ↔ marketplace-api", () => {
       });
 
     await provider.executeTest(async (mockServer) => {
-      const res = await fetch(`${mockServer.url}/orders/7`);
+      const res = await fetch(`${mockServer.url}/orders/7`, {
+        headers: { Authorization: "Bearer example" },
+      });
       expect(res.status).toBe(200);
       const body = (await res.json()) as { id: string; status: string; total_cents: number };
       expect(body).toMatchObject({
@@ -65,6 +71,7 @@ describe("contract · consumer: marketplace-web ↔ marketplace-api", () => {
         method: "POST",
         path: "/orders",
         headers: {
+          Authorization: regex("^Bearer .+$", "Bearer example"),
           "Content-Type": "application/json",
           "Idempotency-Key": "pact-create-1",
         },
@@ -102,6 +109,7 @@ describe("contract · consumer: marketplace-web ↔ marketplace-api", () => {
       const res = await fetch(`${mockServer.url}/orders`, {
         method: "POST",
         headers: {
+          Authorization: "Bearer example",
           "Content-Type": "application/json",
           "Idempotency-Key": "pact-create-1",
         },
