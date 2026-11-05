@@ -82,8 +82,18 @@ export class OrdersController {
   }
 
   @Get(":orderId")
-  getById(@Param("orderId") orderId: string) {
-    return this.ordersService.getById(orderId);
+  @UseGuards(AccessTokenGuard)
+  getById(@Param("orderId") orderId: string, @Req() req: RequestWithPrincipal) {
+    const buyerId = req.principal?.sub;
+    if (!buyerId) {
+      throw new ApplicationError(
+        401,
+        "Invalid access token",
+        "A valid Bearer access token is required.",
+        "invalid-access-token",
+      );
+    }
+    return this.ordersService.getById(orderId, buyerId);
   }
 
   @Patch(":orderId")

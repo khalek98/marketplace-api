@@ -9,11 +9,12 @@ export const DEMO_PASSWORD = "demo-password";
 
 export type HttpResult = { status: number; json: unknown };
 
-export async function resetDemoUser(email: string): Promise<void> {
+export async function resetDemoUser(email: string, role: "buyer" | "seller" | "admin" = "buyer"): Promise<void> {
   if (!dataSource.isInitialized) await dataSource.initialize();
   await dataSource.query(`DELETE FROM users WHERE email = $1`, [email]);
-  await dataSource.query(`INSERT INTO users (email, role, password_hash) VALUES ($1, 'buyer', $2)`, [
+  await dataSource.query(`INSERT INTO users (email, role, password_hash) VALUES ($1, $2, $3)`, [
     email,
+    role,
     await hashPassword(DEMO_PASSWORD),
   ]);
 }

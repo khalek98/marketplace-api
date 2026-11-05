@@ -43,6 +43,7 @@
     "demo:queue": "bash scripts/with-secrets.sh dev node dist/demo-queue.js",
     "demo:auth": "bash scripts/with-secrets.sh dev node dist/demo-auth.js",
     "demo:reuse": "bash scripts/with-secrets.sh dev node dist/demo-reuse.js",
+    "demo:rbac": "bash scripts/with-secrets.sh dev node dist/demo-rbac.js",
     "report": "bash scripts/with-secrets.sh dev node dist/report.js"
   },
   "dependencies": {

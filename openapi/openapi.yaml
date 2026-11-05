@@ -202,6 +202,8 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/UpdateProductRequest"
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: The updated product.
@@ -211,6 +213,18 @@ paths:
                 $ref: "#/components/schemas/Product"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          description: The access token is missing or not valid.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: The token is valid, but the role cannot edit the catalog.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -298,7 +312,9 @@ paths:
         - Orders
       operationId: getOrder
       summary: Get an order
-      description: Returns an order with its historical item snapshots.
+      description: Returns an order with its historical item snapshots. The caller must be the buyer.
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: The requested order.
@@ -308,6 +324,18 @@ paths:
                 $ref: "#/components/schemas/Order"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          description: The access token is missing or not valid.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: The token is valid, but this buyer does not own the order.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
         "404":
           $ref: "#/components/responses/NotFound"
         "500":
