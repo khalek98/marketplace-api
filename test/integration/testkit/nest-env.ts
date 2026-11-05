@@ -25,6 +25,9 @@ export function applyNestTestEnv(): { authFile: string; cleanup(): void } {
   // Schema still requires a valid amqp URL; Nest HTTP suites do not start RabbitMQ.
   process.env.BROKER_URL = process.env.BROKER_URL || "amqp://app:app@127.0.0.1:21130";
   process.env.SKIP_BROKER = "1";
+  // Same for Redis: validation is fail-fast, and these suites never open a client.
+  process.env.REDIS_URL = process.env.REDIS_URL || "redis://127.0.0.1:21140";
+  process.env.REDIS_QUEUE_URL = process.env.REDIS_QUEUE_URL || "redis://127.0.0.1:21141";
   process.env.PORT = process.env.PORT || "3000";
   process.env.CURSOR_HMAC_SECRET = process.env.CURSOR_HMAC_SECRET || "e2e-test-cursor-hmac-secret";
   process.env.LOG_LEVEL = process.env.LOG_LEVEL || "error";
