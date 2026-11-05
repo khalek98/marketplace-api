@@ -1,13 +1,11 @@
 import { Injectable, OnModuleInit } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 
 import { ApplicationError } from "../common/errors/application-error";
-import { Env } from "../config/env.schema";
-import { loadSigningKeys, SigningMaterial } from "../config/signing-keys";
 import dataSource from "../data-source";
 import { RefreshToken } from "../entities/refresh-token.entity";
 import { User } from "../entities/user.entity";
 import { hashPassword, verifyPassword } from "./password";
+import { SigningKeysService } from "./signing-keys.service";
 import {
   ACCESS_TTL_SEC,
   hashRefreshToken,
@@ -27,10 +25,9 @@ export type LoginResult = {
 
 @Injectable()
 export class AuthService implements OnModuleInit {
-  private keys: SigningMaterial | undefined;
   private dummyHash: Promise<string> | undefined;
 
-  constructor(private readonly config: ConfigService<Env, true>) {}
+  constructor(private readonly signing: SigningKeysService) {}
 
   async onModuleInit(): Promise<void> {
     if (!dataSource.isInitialized) {
@@ -51,7 +48,7 @@ export class AuthService implements OnModuleInit {
       throw new ApplicationError(401, "Invalid credentials", "Invalid email or password.", "invalid-credentials");
     }
 
-    const keys = this.signingKeys();
+    const keys = this.signing.material();
     const access = await issueAccessToken(keys, user);
     const refreshToken = newRefreshToken();
     const now = Date.now();
@@ -74,16 +71,6 @@ export class AuthService implements OnModuleInit {
       token_type: "Bearer",
       expires_in: ACCESS_TTL_SEC,
     };
-  }
-
-  private signingKeys(): SigningMaterial {
-    this.keys ??= loadSigningKeys({
-      JWT_KID: this.config.get("JWT_KID", { infer: true }),
-      JWT_PRIVATE_KEY: this.config.get("JWT_PRIVATE_KEY", { infer: true }),
-      JWT_PUBLIC_KEY: this.config.get("JWT_PUBLIC_KEY", { infer: true }),
-      REFRESH_TOKEN_PEPPER: this.config.get("REFRESH_TOKEN_PEPPER", { infer: true }),
-    });
-    return this.keys;
   }
 
   private placeholderHash(): Promise<string> {

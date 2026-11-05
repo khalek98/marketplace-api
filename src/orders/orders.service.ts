@@ -59,6 +59,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   async create(
     body: CreateOrderRequest,
     idempotencyKey: string,
+    buyerId: string,
   ): Promise<{ order: Order; location: string; replay: boolean }> {
     if (!idempotencyKey?.trim()) {
       throw new ApplicationError(
@@ -68,10 +69,18 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         "missing-idempotency-key",
       );
     }
+    if (body.buyer_id !== buyerId) {
+      throw new ApplicationError(
+        403,
+        "Buyer mismatch",
+        "buyer_id does not match the access token subject.",
+        "buyer-mismatch",
+      );
+    }
 
     const fingerprint = canonicalize(body);
     const { orderId, replay } = await checkoutCart({
-      buyerId: body.buyer_id,
+      buyerId,
       items: body.items.map((item) => ({
         productId: item.product_id,
         qty: item.quantity,
