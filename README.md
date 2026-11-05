@@ -81,7 +81,7 @@ User stories:
 - Платежі: зараз mock + контракт webhook; далі **LiqPay**. Обрав його через явний sandbox (`sandbox: 1`), callback на `server_url` з підписом і наявність NestJS-friendly інтеграцій — зручно відпрацювати підтвердження оплати без живих грошей і без зміни HW-09 контракту.
 - Guest mode: read-only каталог без checkout.
 - Admin API: модерація, користувачі, базові звіти.
-- Auth / RBAC на ресурсах (seller — лише свої товари). JWT / denylist поверх Redis-сесій — наступні ДЗ.
+- Платежі й гостьовий режим — ще попереду. Логін, ролі і власність замовлення — у секції [Auth](#auth).
 
 ## Запуск
 
@@ -641,17 +641,85 @@ curl -s "$PACT_BROKER_URL/can-i-deploy?pacticipant=marketplace-web&version=$CONS
 
 CI: `.github/workflows/contract.yml` — job `contract` робить publish → verify → `can-i-deploy`. Джоба падає, коли `deployable` є `false`. На порожньому брокері відповідь лишається `unknown` (версії з тегом `prod` ще немає) — це не провал верифікації, і джоба на цьому не червоніє. Тег `prod` ставить job `deploy` лише коли гейт уже відповів `true`. Секрети — GitHub secrets `PACT_BROKER_URL` / `PACT_BROKER_TOKEN` (у job `contract` для локального compose в Actions достатньо дефолту `http://127.0.0.1:21120`).
 
+## Auth
+
+Access-токен — JWT з алгоритмом **ES256** (крива P-256). Обраний він, а не RS256: OWASP позначає RS256 як not recommended і радить ES256. Підпис асиметричний, тож процес, який лише перевіряє токен, не може виписати собі роль тим самим секретом. У перевірці стоїть явний список `algorithms: ["ES256"]` (`src/auth/tokens.ts`): алгоритм береться не з заголовка токена.
+
+Клієнт демо тримає access і refresh у пам’яті процесу, не в cookie і не в `localStorage`. httpOnly-cookie не дає скрипту прочитати токен, але браузер все одно прикладе її до запиту, тож XSS цим не закривається. Стрім замовлення і WebSocket як і раніше перевіряють HMAC buyer-token з `CURSOR_HMAC_SECRET`, один раз на підключення.
+
+### Змінні
+
+| Змінна | Що це | Джерело | Формат |
+| --- | --- | --- | --- |
+| `JWT_KID` | id активного ключа; лежить у заголовку access-токена | сховище | рядок, без дефолту в схемі |
+| `JWT_PRIVATE_KEY` | підпис access-токенів | сховище | base64 від PKCS#8 PEM (P-256) |
+| `JWT_PUBLIC_KEY` | перевірка підпису | сховище | base64 від SPKI PEM (P-256) |
+| `REFRESH_TOKEN_PEPPER` | перець HMAC refresh-токена; у базі лежить хеш, не сам токен | сховище | рядок, без дефолту в схемі |
+
+`DB_URL` і `REDIS_URL` лишаються в таблиці [Configuration](#змінні-середовища) і теж приходять зі сховища. Денилист access-токенів пишеться в Redis черги (`REDIS_QUEUE_URL`, `noeviction`, ключ `deny:<iss>:<jti>`), не в LRU-кеш.
+
+### Ротація ключа і `kid`
+
+У процесі зараз один ключ. `kid` уже стоїть у захищеному заголовку, і перевірка відхиляє токен, якщо `kid` не збігся з налаштованим. Набір із кількох публічних ключів у рантаймі ще не зроблений. Коли пара змінюється на релізі, порядок такий:
+
+1. Новий публічний ключ додається в набір перевірки, старий лишається.
+2. Нові access-токени підписуються новим приватним ключем і його `kid`.
+3. Старі токени ще проходять перевірку своїм `kid`, доки не спливе `exp`.
+4. Після `max(exp)` токенів старого `kid` старий публічний ключ прибирається з набору.
+5. Приватний ключ старого `kid` після кроку 2 більше не підписує.
+
+### Логаут — дві дії
+
+`POST /auth/logout` спочатку в одній транзакції Postgres ставить `revoked_at` на всю сім’ю refresh (`family_id` з access-токена). Потім окремо робить `SET` у Redis на `jti` цього access, з TTL не довшим за залишок до `exp`. Postgres і Redis не ділять один COMMIT. Якщо запис у Redis не вдався, відповідь **503**, не 204: сім’я вже відкликана, клієнт повторює логаут. Успішний 204 означає, що сталися обидві дії.
+
+Повтор того самого refresh у вікні **3 секунди** (`REFRESH_GRACE_MS`) повертає вже видану пару: два паралельні рефреші не вбивають сім’ю. `demo:reuse` чекає довше за це вікно (3 с + 1 с) і лише потім пред’являє старий токен. Після вікна повтор відкликає всю сім’ю.
+
+### Роль і власник
+
+Роль у access-токені — кеш до `exp`. Якщо admin розжалували в базі, вже виданий токен лишається admin, доки не спливе. Новий логін отримає вже нову роль.
+
+Гард автентифікації лише перевіряє підпис, строк і денилист. Він не знає, чиє це замовлення. Власник звіряється в `orders.service` після завантаження рядка: `buyer_id` порівнюється з `sub`. Немає токена або підпис битий — **401**. Токен справжній, але замовлення чуже — **403**. Роль на `PATCH /products/:id` дивиться інший гард: `buyer` отримує 403, `seller` або `admin` — 200. Це перевірка ролі, не власника товару в Postgres (каталог цього маршруту в пам’яті процесу).
+
+### Відбитки ключів
+
+Відбиток — перші 8 hex sha256 від публічного ключа у форматі SPKI DER. Той самий рядок процес друкує перед `listen`: `[jwt] kid=… fp=…`. PEM і base64 приватного ключа тут не наводяться.
+
+| Оточення | kid | відбиток |
+| --- | --- | --- |
+| dev | `local-k1` | `3bf6f0ae` |
+| prod | `local-k1` | `3bf6f0ae` |
+
+Slug `prod` у сховищі повернув ту саму пару, що й dev. Однаковий відбиток означає, що оточення ще не розділені: ключ dev підпише токен, який prod прийме. У prod має з’явитись інша пара і інший перець; після заміни рядок prod у цій таблиці треба оновити з нового `fp=`.
+
 ## Grading
 
 Свіжий клон, чиста БД, без доступу до Infisical. Дев-креденшели стенда (не секрет хмари):
 
 ```bash
+cp secrets/db_auth.example secrets/db_auth
 docker compose up -d --wait
+export PORT=3000
 export DB_HOST=127.0.0.1 DB_PORT=21111 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
+export DB_URL=postgres://ignored@127.0.0.1:21111/shop
+export DB_AUTH_FILE=secrets/db_auth
 export BROKER_URL=amqp://app:app@127.0.0.1:21130
 export REDIS_URL=redis://127.0.0.1:21140
 export REDIS_QUEUE_URL=redis://127.0.0.1:21141
+export CURSOR_HMAC_SECRET=local-cursor-hmac
 export SKIP_VAULT=1    # у грейдера немає доступу до сховища
+node -e 'const {generateKeyPairSync}=require("node:crypto");
+const fs=require("node:fs");
+const k=generateKeyPairSync("ec",{namedCurve:"P-256",
+  privateKeyEncoding:{type:"pkcs8",format:"pem"},
+  publicKeyEncoding:{type:"spki",format:"pem"}});
+fs.writeFileSync("/tmp/jwt-priv.b64",Buffer.from(k.privateKey).toString("base64"));
+fs.writeFileSync("/tmp/jwt-pub.b64",Buffer.from(k.publicKey).toString("base64"));'
+export JWT_KID=local-demo
+export JWT_PRIVATE_KEY="$(cat /tmp/jwt-priv.b64)"
+export JWT_PUBLIC_KEY="$(cat /tmp/jwt-pub.b64)"
+export REFRESH_TOKEN_PEPPER=local-demo-pepper
+rm -f /tmp/jwt-priv.b64 /tmp/jwt-pub.b64
+npm ci
 ```
 
 `DB_PORT=21111` — опублікований порт **PgBouncer** (прямий Postgres лишається на `21110`). `BROKER_URL` — AMQP на `21130` (не management UI на `21131`). `REDIS_URL` — кеш на `21140`; `REDIS_QUEUE_URL` — черга/сесії на `21141` (різні інстанси).
@@ -663,6 +731,8 @@ Async-події (RabbitMQ уже в `docker compose up -d --wait` вище): `n
 Outbox + ідемпотентність (після `npm run build && npm run migrate && npm run seed`): `npm run demo:outbox`, `npm run demo:crash-write`, `npm run demo:crash-relay`. Числа й обґрунтування — у секції [Outbox та ідемпотентність](#outbox-та-ідемпотентність).
 
 Redis (після `npm run build && npm run migrate && npm run seed`; Redis уже в `docker compose up -d --wait`): `npm run demo:cache`, `npm run demo:session`, `npm run demo:ratelimit`, `npm run demo:queue`. Числа й обґрунтування — у секції [Redis: кеш, сесії, ліміти, черга](#redis-кеш-сесії-ліміти-черга).
+
+Логін і права (ті самі export-и, включно з одноразовою парою ES256 вище; після `npm run build && npm run migrate`): `npm run demo:auth`, `npm run demo:reuse`, `npm run demo:rbac`. Що означають числа — у секції [Auth](#auth).
 
 Realtime — після `npm run build && npm run migrate && npm run seed`. У шелі API ще `set -a && source .env && set +a` (або ті самі `export` + `BROKER_URL` / Redis URL) і `npm start`. У другому терміналі: `node scripts/realtime-demo.mjs` і `node scripts/realtime-demo.mjs --same-room`. Потік `text/event-stream` і `Last-Event-ID` — у секції [Realtime](#realtime).
 
@@ -687,8 +757,8 @@ Infisical **не** є залежністю Nest. Тека `infisical/` — ло�
 
 Пароль Postgres **лишається у файлі** навіть з Infisical: зміна секрету в vault дає лише новий env-знімок після рестарту процесу; ротація без рестарту на env не працює.
 
-**Що кладемо в сейф зараз:** `CURSOR_HMAC_SECRET`.  
-Несекрети (`PORT`, `DB_URL`, `LOG_LEVEL`, …) зручно тримати в локальному `.env`.
+**Що кладемо в сейф зараз:** `CURSOR_HMAC_SECRET`, `JWT_KID`, `JWT_PRIVATE_KEY`, `JWT_PUBLIC_KEY`, `REFRESH_TOKEN_PEPPER`.  
+Несекрети (`PORT`, `DB_URL`, `LOG_LEVEL`, …) зручно тримати в локальному `.env`. Dev і prod мають тримати різні пари підпису і різний перець.
 
 ### Self-host (інший ПК / чистий clone)
 
