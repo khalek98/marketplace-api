@@ -30,6 +30,11 @@ export function applyNestTestEnv(): { authFile: string; cleanup(): void } {
   process.env.REDIS_QUEUE_URL = process.env.REDIS_QUEUE_URL || "redis://127.0.0.1:21141";
   process.env.PORT = process.env.PORT || "3000";
   process.env.CURSOR_HMAC_SECRET = process.env.CURSOR_HMAC_SECRET || "e2e-test-cursor-hmac-secret";
+  // Schema requires these. Suites do not sign tokens yet, so placeholders are enough.
+  process.env.JWT_KID = process.env.JWT_KID || "test-kid";
+  process.env.JWT_PRIVATE_KEY = process.env.JWT_PRIVATE_KEY || "test-private-key";
+  process.env.JWT_PUBLIC_KEY = process.env.JWT_PUBLIC_KEY || "test-public-key";
+  process.env.REFRESH_TOKEN_PEPPER = process.env.REFRESH_TOKEN_PEPPER || "test-pepper";
   process.env.LOG_LEVEL = process.env.LOG_LEVEL || "error";
 
   return {

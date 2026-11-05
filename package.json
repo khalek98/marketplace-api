@@ -6,6 +6,7 @@
   "scripts": {
     "build": "rm -rf dist && tsc",
     "start": "npm run build && node dist/main.js",
+    "start:vault": "bash scripts/with-secrets.sh dev node dist/main.js",
     "start:dev": "nest start --watch",
     "start:infisical": "bash infisical/run.sh",
     "openapi:lint": "redocly lint openapi/openapi.yaml",
