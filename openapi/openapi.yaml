@@ -13,12 +13,48 @@ servers:
     description: Current host, including the local HW-09 adapter.
 security: []
 tags:
+  - name: Auth
+    description: Login and session tokens.
   - name: Products
     description: Marketplace catalog operations.
   - name: Orders
     description: Order placement and retrieval operations.
 
 paths:
+  /auth/login:
+    post:
+      tags:
+        - Auth
+      operationId: login
+      summary: Log in
+      description: >
+        Checks the email and password and returns an access token plus an
+        opaque refresh token. Unknown email and a wrong password get the same
+        401. The refresh token is not a JWT and is not stored as-is.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: A fresh access token and refresh token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: The email or password is wrong.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
   /products:
     get:
       tags:
@@ -325,6 +361,49 @@ components:
             $ref: "#/components/schemas/Problem"
 
   schemas:
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          minLength: 3
+          maxLength: 320
+        password:
+          type: string
+          minLength: 1
+          maxLength: 200
+
+    TokenPair:
+      type: object
+      additionalProperties: false
+      required:
+        - access_token
+        - refresh_token
+        - token_type
+        - expires_in
+      properties:
+        access_token:
+          type: string
+          minLength: 1
+          description: ES256 JWT. The client keeps it in memory.
+        refresh_token:
+          type: string
+          minLength: 1
+          description: Opaque random token. Not a JWT.
+        token_type:
+          type: string
+          enum:
+            - Bearer
+        expires_in:
+          type: integer
+          minimum: 1
+          description: Access-token lifetime in seconds.
+
     ResourceId:
       type: string
       minLength: 1
