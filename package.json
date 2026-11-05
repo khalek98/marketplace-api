@@ -35,6 +35,7 @@
     "demo:outbox": "bash scripts/with-secrets.sh dev node dist/demo-outbox.js",
     "demo:crash-write": "bash scripts/with-secrets.sh dev node dist/demo-crash-write.js",
     "demo:crash-relay": "bash scripts/with-secrets.sh dev node dist/demo-crash-relay.js",
+    "relay:outbox": "bash scripts/with-secrets.sh dev node dist/relay-worker.js",
     "demo:cache": "bash scripts/with-secrets.sh dev node dist/demo-cache.js",
     "demo:session": "bash scripts/with-secrets.sh dev node dist/demo-session.js",
     "demo:ratelimit": "bash scripts/with-secrets.sh dev node dist/demo-ratelimit.js",
