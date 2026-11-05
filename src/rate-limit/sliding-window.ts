@@ -12,9 +12,16 @@ local n = redis.call('ZCARD', KEYS[1])
 if n < tonumber(ARGV[3]) then
   redis.call('ZADD',    KEYS[1], ARGV[1], ARGV[4])
   redis.call('PEXPIRE', KEYS[1], ARGV[2])
-  return 1
+  return {1, 0}
 end
-return 0
+local oldest = redis.call('ZRANGE', KEYS[1], 0, 0, 'WITHSCORES')
+local score = tonumber(oldest[2])
+local retryMs = tonumber(ARGV[2])
+if score then
+  retryMs = score + tonumber(ARGV[2]) - tonumber(ARGV[1])
+end
+if retryMs < 1 then retryMs = 1 end
+return {0, retryMs}
 `;
 
 export type RateLimitDecision = {
@@ -36,24 +43,20 @@ export class SlidingWindowRateLimiter {
 
   async check(who: string): Promise<RateLimitDecision> {
     const key = `${this.opts.keyPrefix ?? "rl:slide"}:${who}`;
-    const allowed =
-      Number(
-        await this.redis.eval(
-          SLIDING_WINDOW_LUA,
-          1,
-          key,
-          String(Date.now()),
-          String(this.opts.windowMs),
-          String(this.opts.limit),
-          randomUUID(),
-        ),
-      ) === 1;
+    const pair = (await this.redis.eval(
+      SLIDING_WINDOW_LUA,
+      1,
+      key,
+      String(Date.now()),
+      String(this.opts.windowMs),
+      String(this.opts.limit),
+      randomUUID(),
+    )) as [number | string, number | string];
 
-    if (allowed) {
+    if (Number(pair[0]) === 1) {
       return { allowed: true, status: 200, retryAfterSec: null };
     }
-    // Ceiling of remaining window in seconds; demo only needs the header present.
-    const retryAfterSec = Math.max(1, Math.ceil(this.opts.windowMs / 1000));
+    const retryAfterSec = Math.max(1, Math.ceil(Number(pair[1]) / 1000));
     return { allowed: false, status: 429, retryAfterSec };
   }
 }

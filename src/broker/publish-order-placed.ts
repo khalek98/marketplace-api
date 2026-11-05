@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import type { ConfirmChannel } from "amqplib";
+
 import { isBrokerEnabled } from "./broker-enabled";
 import { withConfirmChannel } from "./connect";
 import { EXCHANGE, ROUTING_KEY } from "./names";
@@ -33,25 +35,28 @@ export function toOrderPlacedEvent(input: {
   };
 }
 
+/** Publish on an already-open confirm channel. The relay reuses one channel per pass. */
+export async function publishOrderPlacedOnChannel(ch: ConfirmChannel, event: OrderPlacedEvent): Promise<void> {
+  const ok = ch.publish(EXCHANGE.events, ROUTING_KEY.orderPlaced, Buffer.from(JSON.stringify(event)), {
+    contentType: "application/json",
+    persistent: true,
+    messageId: event.eventId,
+    type: event.type,
+    timestamp: Math.floor(Date.now() / 1000),
+  });
+  if (!ok) {
+    throw new Error("order.placed publish returned false (write buffer full)");
+  }
+  await ch.waitForConfirms();
+}
+
 /** Publish a ready event (relay / demos). messageId = event.eventId (= outbox id on the happy path). */
 export async function publishOrderPlacedEvent(event: OrderPlacedEvent): Promise<void> {
   if (!isBrokerEnabled()) {
     return;
   }
 
-  await withConfirmChannel(async (ch) => {
-    const ok = ch.publish(EXCHANGE.events, ROUTING_KEY.orderPlaced, Buffer.from(JSON.stringify(event)), {
-      contentType: "application/json",
-      persistent: true,
-      messageId: event.eventId,
-      type: event.type,
-      timestamp: Math.floor(Date.now() / 1000),
-    });
-    if (!ok) {
-      throw new Error("order.placed publish returned false (write buffer full)");
-    }
-    await ch.waitForConfirms();
-  });
+  await withConfirmChannel((ch) => publishOrderPlacedOnChannel(ch, event));
 }
 
 /** Direct publish (HW-19 demos). Production path writes outbox in checkout, then relay publishes. */
