@@ -45,6 +45,7 @@ export async function relayOutboxPass(options: RelayOutboxPassOptions = {}): Pro
   const qr = options.queryRunner ?? dataSource.createQueryRunner();
   let conn: ChannelModel | undefined;
   let ch: ConfirmChannel | undefined;
+  let backoffCommitted = false;
 
   if (ownRunner) {
     await qr.connect();
@@ -56,6 +57,7 @@ export async function relayOutboxPass(options: RelayOutboxPassOptions = {}): Pro
     const rows: OutboxRow[] = await qr.query(
       `SELECT id, payload FROM outbox
        WHERE published_at IS NULL
+         AND (next_attempt_at IS NULL OR next_attempt_at <= now())
        ORDER BY created_at, id
        LIMIT $1
        FOR UPDATE SKIP LOCKED`,
@@ -70,26 +72,32 @@ export async function relayOutboxPass(options: RelayOutboxPassOptions = {}): Pro
     // One connection for the whole batch. A new connect per row holds these locks idle.
     conn = await connectBroker();
     ch = await conn.createConfirmChannel();
+    const publishedIds: string[] = [];
     for (const row of rows) {
       const event = normalizePayload(row);
-      await publishOrderPlacedOnChannel(ch, event);
+      try {
+        await publishOrderPlacedOnChannel(ch, event);
+      } catch (error) {
+        // Commit the backoff. A rollback would leave attempts at 0 and the row hot-loops.
+        if (publishedIds.length > 0) await markPublished(qr, publishedIds);
+        await markPublishFailed(qr, row.id);
+        if (ownRunner) await qr.commitTransaction();
+        backoffCommitted = true;
+        throw error;
+      }
+      publishedIds.push(row.id);
     }
 
     if (options.abortBeforeUpdate) {
-      throw new RelayAbortBeforeUpdate(rows.length);
+      throw new RelayAbortBeforeUpdate(publishedIds.length);
     }
 
-    await qr.query(
-      `UPDATE outbox
-       SET published_at = now(), attempts = attempts + 1
-       WHERE id = ANY($1::uuid[])`,
-      [rows.map((r) => r.id)],
-    );
+    await markPublished(qr, publishedIds);
 
     if (ownRunner) await qr.commitTransaction();
-    return rows.length;
+    return publishedIds.length;
   } catch (err) {
-    if (ownRunner) await qr.rollbackTransaction().catch(() => undefined);
+    if (ownRunner && !backoffCommitted) await qr.rollbackTransaction().catch(() => undefined);
     throw err;
   } finally {
     await ch?.close().catch(() => undefined);
@@ -108,6 +116,26 @@ export async function relayOutboxUntilEmpty(options: { limit?: number; maxPasses
     published += n;
   }
   throw new Error(`relayOutboxUntilEmpty: still unpublished after ${maxPasses} passes`);
+}
+
+async function markPublished(qr: QueryRunner, ids: string[]): Promise<void> {
+  await qr.query(
+    `UPDATE outbox
+     SET published_at = now(), attempts = attempts + 1
+     WHERE id = ANY($1::uuid[])`,
+    [ids],
+  );
+}
+
+/** Bump attempts and push next_attempt_at out. Uses the pre-increment attempts value. */
+async function markPublishFailed(qr: QueryRunner, id: string): Promise<void> {
+  await qr.query(
+    `UPDATE outbox
+     SET attempts = attempts + 1,
+         next_attempt_at = now() + (LEAST(60, power(2, attempts + 1)::int) * interval '1 second')
+     WHERE id = $1`,
+    [id],
+  );
 }
 
 function normalizePayload(row: OutboxRow): OrderPlacedEvent {

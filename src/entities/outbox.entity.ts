@@ -27,4 +27,8 @@ export class Outbox {
 
   @Column({ type: "int", default: 0 })
   attempts!: number;
+
+  /** When set and still in the future, the relay skips this unpublished row. */
+  @Column({ name: "next_attempt_at", type: "timestamptz", nullable: true })
+  nextAttemptAt!: Date | null;
 }
