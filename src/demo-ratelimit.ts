@@ -28,10 +28,11 @@ async function runWorker(): Promise<void> {
   const limiter = new SlidingWindowRateLimiter(redis, { limit: LIMIT, windowMs: WINDOW_MS });
 
   process.on("message", (msg: { id?: number }) => {
-    if (typeof msg.id !== "number") return;
+    const id = msg.id;
+    if (typeof id !== "number") return;
     void limiter.check(CLIENT).then((decision) => {
       process.send?.({
-        id: msg.id,
+        id,
         allowed: decision.allowed,
         status: decision.status,
         retryAfterSec: decision.retryAfterSec,
