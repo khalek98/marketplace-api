@@ -82,8 +82,7 @@ User stories:
 - Guest mode: read-only каталог без checkout.
 - Admin API: модерація, користувачі, базові звіти.
 - Auth / RBAC на ресурсах (seller — лише свої товари).
-- Redis cache-aside для каталогу + idempotency storage з TTL.
-- Outbox worker + черга для `order.placed`.
+- Redis cache-aside для каталогу + sessions / rate-limit / BullMQ (поверх тієї ж події `order.placed`).
 
 ## Запуск
 
@@ -164,7 +163,7 @@ curl -sN --max-time 2 \
 
 ## Async-події через RabbitMQ
 
-Realtime з попереднього розділу доставляє тому, хто **зараз** у кімнаті. Тут зʼявляється брокер: після `COMMIT` checkout публікується `order.placed` у topic-exchange `shop.events`, споживач пише рядок у `order_notifications` і лише тоді робить `ack`. AMQP — порт **21130**, management UI — **21131** (`app` / `app`).
+Realtime з попереднього розділу доставляє тому, хто **зараз** у кімнаті. Тут брокер: checkout пише `order.placed` у `outbox` в одній TX; relay публікує в topic-exchange `shop.events`; споживач пише в `order_notifications` (і inbox) і лише тоді робить `ack`. AMQP — порт **21130**, management UI — **21131** (`app` / `app`). Деталі outbox — нижче.
 
 З нуля на іншій машині (після `cp secrets/db_auth.example secrets/db_auth` і `cp .env.example .env`; у `.env` підставай реальний `BROKER_URL` або експортуй його в shell):
 
@@ -203,7 +202,50 @@ npm run demo:duplicate
 
 Помилка обробника (не битий JSON) робить `nack` з requeue, але не більше `x-delivery-limit` (5) на `shop.orders.placed`. Далі `reject` без requeue, і повідомлення лежить у DLQ. Інакше відсутній `INSERT` крутив би ту саму доставку без зупинки.
 
-Між `COMMIT` замовлення і `publish` процес може впасти — замовлення буде, події не буде (dual write). Це закриє transactional outbox пізніше. Дефолтний шлях dead-letter у RabbitMQ — at-most-once на репаблиш у DLX; для локальних демо цього достатньо. У проді для quorum мав би сенс LTS-образ **4.2.x**; тут **4.3.4-management**, щоб поведінка `reject` / `nack` збігалась із матеріалами лекції.
+Дефолтний шлях dead-letter у RabbitMQ — at-most-once на репаблиш у DLX; для локальних демо цього достатньо. У проді для quorum мав би сенс LTS-образ **4.2.x**; тут **4.3.4-management**, щоб поведінка `reject` / `nack` збігалась із матеріалами лекції.
+
+Checkout більше не публікує в брокер прямо після `COMMIT`: подія йде в таблицю `outbox` у тій самій транзакції. Як це працює і які числа дають три демо — у секції [Outbox та ідемпотентність](#outbox-та-ідемпотентність).
+
+## Outbox та ідемпотентність
+
+Проблема dual write: немає спільного `COMMIT` між Postgres і RabbitMQ. Якщо писати замовлення в БД, а потім окремо `publish`, між цими кроками процес може впасти — замовлення є, події немає (або навпаки).
+
+Рішення: у тій самій транзакції, що checkout, пишемо рядок у `outbox` (`published_at IS NULL`). Relay забирає пачку через `SELECT … FOR UPDATE SKIP LOCKED`, публікує в exchange, лише потім ставить `published_at`. Консюмер застосовує ефект ідемпотентно: inbox `processed_messages` + природний ключ `order_notifications(event_id)` в одній Postgres-транзакції. На API-краю `Idempotency-Key` живе в `api_requests` (теж у тій самій TX, що order+outbox).
+
+Чому порядок саме **publish → `UPDATE published_at`**, а не навпаки: якщо спочатку позначити «винесено», а publish відмовить (або відповідь брокера загубиться), отримаєш **втрату** події. Дубль лікується дедупом на консюмері; втрата — ні. Тому свідомо обираємо at-least-once доставку.
+
+`demo:crash-relay` моделює падіння **винятком + `ROLLBACK`** рівно між publish і `UPDATE published_at` (як крок 8 у коді лекції), не через `kill -9` дочірнього процесу. Наслідок той самий: рядок лишається unpublished → повторний publish → `deliveries ≥ 2`, ефект один.
+
+Outbox росте: опубліковані рядки можна періодично архівувати/видаляти (наприклад `DELETE FROM outbox WHERE published_at < now() - interval '7 days'` у cron). Частковий індекс `WHERE published_at IS NULL` тримає «гарячий» хвіст маленьким; без чистки він деградує разом із таблицею. Порядок доставки між різними `aggregate_id` при кількох relay **не** гарантований (`SKIP LOCKED` розкидає рядки).
+
+З нуля на іншій машині (після `cp secrets/db_auth.example secrets/db_auth`):
+
+```bash
+docker compose down -v
+cp secrets/db_auth.example secrets/db_auth
+docker compose up -d --wait
+
+export SKIP_VAULT=1
+export DB_HOST=127.0.0.1 DB_PORT=21111 DB_USER=app_user_a DB_PASSWORD=app-v1-password DB_NAME=shop
+export BROKER_URL=amqp://app:app@127.0.0.1:21130
+
+npm ci
+npm run build
+npm run migrate
+npm run seed
+
+npm run demo:outbox
+npm run demo:crash-write
+npm run demo:crash-relay
+```
+
+Прогін на цьому стенді (2026-11-04):
+
+| Демо               | Результат                                                                                |
+| ------------------ | ---------------------------------------------------------------------------------------- |
+| `demo:outbox`      | `requests=2` `orders=1` `outbox=1` `published=1` `deliveries=1` `effect=1` `processed=1` |
+| `demo:crash-write` | `write-failed=1` `orders=0` `outbox=0` `published=0` `deliveries=0` `effect=0`           |
+| `demo:crash-relay` | `published=1` `deliveries=2` `applied=1` `effect=1` `processed=1`                        |
 
 ## Configuration
 
@@ -558,6 +600,8 @@ export SKIP_VAULT=1    # у грейдера немає доступу до сх
 
 Async-події (RabbitMQ уже в `docker compose up -d --wait` вище): `npm run demo:publish`, `npm run demo:dlq`, `npm run demo:duplicate`. Числа й обґрунтування — у секції [Async-події через RabbitMQ](#async-події-через-rabbitmq).
 
+Outbox + ідемпотентність (після `npm run build && npm run migrate && npm run seed`): `npm run demo:outbox`, `npm run demo:crash-write`, `npm run demo:crash-relay`. Числа й обґрунтування — у секції [Outbox та ідемпотентність](#outbox-та-ідемпотентність).
+
 Realtime — після `npm run build && npm run migrate && npm run seed`. У шелі API ще `set -a && source .env && set +a` (або ті самі `export` + `BROKER_URL`) і `npm start`. У другому терміналі: `node scripts/realtime-demo.mjs` і `node scripts/realtime-demo.mjs --same-room`. Потік `text/event-stream` і `Last-Event-ID` — у секції [Realtime](#realtime).
 
 Бекап і restore-drill (після того як у БД є дані — хоча б після `seed`). Дамп іде на прямий Postgres, не на порт застосунку:
@@ -651,4 +695,5 @@ docker compose -f infisical/docker-compose.yml down
 - **2026-09-29 (HW-14):** transactional checkout (atomic UPDATE+RETURNING), таблиця `jobs` + `FOR UPDATE SKIP LOCKED`, retry лише `40001`/`40P01`; демо `demo:race|workers|retry`. Stock захищаємо атомарним UPDATE, не підняттям isolation до SERIALIZABLE.
 - **2026-10-13 (HW-18):** realtime на двох транспортах з однієї шини (`OrderEventsService`). Для стрічки статусу замовлення в проді лишаю SSE; socket.io — для `join`/кімнат, де клієнт теж пише в канал.
 - **2026-10-14 (HW-19):** async `order.placed` через RabbitMQ (topic `shop.events`, quorum + DLQ, ручний ack, `prefetch=20`, ідемпотентні `order_notifications`). Публікація після checkout COMMIT — dual write до outbox лишається відкритим.
+- **2026-11-04 (HW-22):** transactional outbox у тій самій TX, що checkout; relay зі `SKIP LOCKED`; inbox `processed_messages` + `Idempotency-Key` у `api_requests`; демо `demo:outbox|crash-write|crash-relay`. Dual write між Postgres і брокером закрито at-least-once + ідемпотентним ефектом.
 - Наступні зміни архітектури додаються сюди з причиною та наслідками, а не приховуються переписуванням історії.

@@ -1,13 +1,11 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 
-import { publishOrderPlaced } from "../broker/publish-order-placed";
 import { checkoutCart } from "../checkout/checkout";
 import { ApplicationError } from "../common/errors/application-error";
 import dataSource from "../data-source";
 import { Order as OrderEntity } from "../entities/order.entity";
 import { canonicalize } from "../utils/canonicalize";
 import { OrderEventsService } from "./order-events.service";
-import { clone, idempotencyRecords } from "./orders.store";
 import { Currency, Order, CreateOrderRequest, OrderStatus } from "./orders.types";
 
 const HTTP_STATUS: Record<OrderEntity["status"], OrderStatus> = {
@@ -62,26 +60,6 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     body: CreateOrderRequest,
     idempotencyKey: string,
   ): Promise<{ order: Order; location: string; replay: boolean }> {
-    const fingerprint = canonicalize(body);
-    const previous = idempotencyRecords.get(idempotencyKey);
-
-    if (previous) {
-      if (previous.fingerprint !== fingerprint) {
-        throw new ApplicationError(
-          422,
-          "Idempotency key conflict",
-          "This Idempotency-Key was already used with a different request body.",
-          "idempotency-key-conflict",
-        );
-      }
-
-      return {
-        order: clone(previous.body),
-        location: previous.location,
-        replay: true,
-      };
-    }
-
     if (!idempotencyKey?.trim()) {
       throw new ApplicationError(
         400,
@@ -91,16 +69,16 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    const { orderId } = await checkoutCart({
+    const fingerprint = canonicalize(body);
+    const { orderId, replay } = await checkoutCart({
       buyerId: body.buyer_id,
       items: body.items.map((item) => ({
         productId: item.product_id,
         qty: item.quantity,
       })),
+      idempotencyKey,
+      fingerprint,
     });
-
-    // After COMMIT: broker is outside the Postgres transaction (dual-write gap until HW-22).
-    await publishOrderPlaced({ orderId, buyerId: body.buyer_id });
 
     const entity = await dataSource.getRepository(OrderEntity).findOneOrFail({
       where: { id: orderId },
@@ -109,14 +87,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     const order = this.toHttpOrder(entity);
     const location = `/orders/${order.id}`;
 
-    idempotencyRecords.set(idempotencyKey, {
-      fingerprint,
-      status: 201,
-      location,
-      body: clone(order),
-    });
-
-    return { order, location, replay: false };
+    return { order, location, replay };
   }
 
   async ownsOrder(orderId: string, buyerId: string): Promise<boolean> {

@@ -12,18 +12,31 @@ export type OrderPlacedEvent = {
   buyerId: string;
 };
 
-/** Publish after checkout COMMIT. Does not declare queues — topology is consumer/bootstrap. */
-export async function publishOrderPlaced(input: { orderId: string; buyerId: string }): Promise<OrderPlacedEvent> {
-  const event: OrderPlacedEvent = {
-    eventId: randomUUID(),
+/**
+ * Stable event contract for outbox payload / consumers.
+ * Do not spread an ORM entity — column renames must not become a public API break.
+ */
+export function toOrderPlacedEvent(input: {
+  eventId: string;
+  orderId: string;
+  buyerId: string;
+  occurredAt?: Date | string;
+}): OrderPlacedEvent {
+  const occurredAt =
+    input.occurredAt instanceof Date ? input.occurredAt.toISOString() : (input.occurredAt ?? new Date().toISOString());
+  return {
+    eventId: input.eventId,
     type: "order.placed",
-    occurredAt: new Date().toISOString(),
-    orderId: input.orderId,
-    buyerId: input.buyerId,
+    occurredAt,
+    orderId: String(input.orderId),
+    buyerId: String(input.buyerId),
   };
+}
 
+/** Publish a ready event (relay / demos). messageId = event.eventId (= outbox id on the happy path). */
+export async function publishOrderPlacedEvent(event: OrderPlacedEvent): Promise<void> {
   if (!isBrokerEnabled()) {
-    return event;
+    return;
   }
 
   await withConfirmChannel(async (ch) => {
@@ -39,6 +52,16 @@ export async function publishOrderPlaced(input: { orderId: string; buyerId: stri
     }
     await ch.waitForConfirms();
   });
+}
 
+/** Direct publish (HW-19 demos). Production path writes outbox in checkout, then relay publishes. */
+export async function publishOrderPlaced(input: { orderId: string; buyerId: string }): Promise<OrderPlacedEvent> {
+  const event = toOrderPlacedEvent({
+    eventId: randomUUID(),
+    orderId: input.orderId,
+    buyerId: input.buyerId,
+  });
+
+  await publishOrderPlacedEvent(event);
   return event;
 }
