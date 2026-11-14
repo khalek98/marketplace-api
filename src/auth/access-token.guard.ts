@@ -38,7 +38,7 @@ export class AccessTokenGuard implements CanActivate {
     } catch {
       throw unauthorized();
     }
-    // Signature first. A garbage token never touches Redis.
+    // Signature first. A stolen or garbage token never opens the denylist table.
     if (await this.denylist.has(principal.jti)) {
       throw unauthorized();
     }

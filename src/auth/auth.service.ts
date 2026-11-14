@@ -8,6 +8,7 @@ import { RefreshToken } from "../entities/refresh-token.entity";
 import { User } from "../entities/user.entity";
 import { Denylist } from "./denylist";
 import { hashPassword, verifyPassword } from "./password";
+import { RefreshGrace } from "./refresh-grace";
 import { SigningKeysService } from "./signing-keys.service";
 import {
   ACCESS_TTL_SEC,
@@ -52,12 +53,11 @@ function statementRows<T>(raw: unknown): T[] {
 @Injectable()
 export class AuthService implements OnModuleInit {
   private dummyHash: Promise<string> | undefined;
-  /** Raw successor pair for a refresh hash, kept only for the grace window. */
-  private readonly grace = new Map<string, LoginResult>();
 
   constructor(
     private readonly signing: SigningKeysService,
     private readonly denylist: Denylist,
+    private readonly grace: RefreshGrace,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -110,13 +110,14 @@ export class AuthService implements OnModuleInit {
     const hash = hashRefreshToken(keys.pepper, refreshToken);
     const rotated = await dataSource.transaction((manager) => this.claimAndRotate(manager, keys, hash));
     if (rotated) {
-      this.rememberGrace(hash, rotated);
+      await this.grace.put(hash, rotated);
       return rotated;
     }
     return this.rejectOrReplay(hash);
   }
 
   async logout(principal: { familyId: string; jti: string; exp: number }): Promise<void> {
+    const ttlSec = denyTtlSec(principal.exp);
     await dataSource.transaction(async (manager) => {
       await manager.query(
         `UPDATE refresh_tokens
@@ -125,20 +126,8 @@ export class AuthService implements OnModuleInit {
             AND revoked_at IS NULL`,
         [principal.familyId],
       );
+      if (ttlSec >= 1) await this.denylist.revoke(manager, principal.jti, principal.exp);
     });
-
-    const ttlSec = denyTtlSec(principal.exp);
-    if (ttlSec < 1) return;
-    try {
-      await this.denylist.revoke(principal.jti, ttlSec);
-    } catch {
-      throw new ApplicationError(
-        503,
-        "Logout incomplete",
-        "The refresh family is revoked, but the access token could not be denylisted. Retry logout.",
-        "denylist-unavailable",
-      );
-    }
   }
 
   /**
@@ -231,16 +220,10 @@ export class AuthService implements OnModuleInit {
     throw invalidRefresh();
   }
 
-  private rememberGrace(hash: string, pair: LoginResult): void {
-    this.grace.set(hash, pair);
-    const timer = setTimeout(() => this.grace.delete(hash), REFRESH_GRACE_MS);
-    timer.unref();
-  }
-
   private async waitForGrace(hash: string): Promise<LoginResult | undefined> {
     const deadline = Date.now() + Math.min(REFRESH_GRACE_MS, 500);
     for (;;) {
-      const pair = this.grace.get(hash);
+      const pair = await this.grace.get(hash);
       if (pair) return pair;
       if (Date.now() > deadline) return undefined;
       await new Promise((resolve) => setTimeout(resolve, 10));

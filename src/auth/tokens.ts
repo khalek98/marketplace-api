@@ -86,10 +86,6 @@ export function newFamilyId(): string {
   return randomUUID();
 }
 
-export function denyKey(issuer: string, jti: string): string {
-  return `deny:${issuer}:${jti}`;
-}
-
 /** Seconds the denylist entry may live. Never longer than the access token, never forever. */
 export function denyTtlSec(exp: number, nowMs = Date.now()): number {
   return Math.floor(exp - nowMs / 1000);

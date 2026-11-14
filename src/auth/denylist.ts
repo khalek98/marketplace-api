@@ -1,37 +1,30 @@
-import { Injectable, OnModuleDestroy } from "@nestjs/common";
-import type Redis from "ioredis";
+import { Injectable } from "@nestjs/common";
+import type { EntityManager } from "typeorm";
 
-import { createJobsRedis } from "../redis/clients";
-import { denyKey, ISSUER } from "./tokens";
+import dataSource from "../data-source";
 
-/** Access-token denylist on the queue Redis (noeviction), not the LRU cache. */
+/**
+ * Access-token denylist lives in Postgres so logout can write it in the same
+ * transaction as the refresh-family revoke. A crash cannot leave the access
+ * token usable after the family is already dead.
+ */
 @Injectable()
-export class Denylist implements OnModuleDestroy {
-  private redis: Redis | undefined;
-
-  async revoke(jti: string, ttlSec: number): Promise<void> {
-    if (ttlSec < 1) return;
-    await this.client().set(denyKey(ISSUER, jti), "1", "EX", ttlSec);
+export class Denylist {
+  async revoke(manager: EntityManager, jti: string, expSec: number): Promise<void> {
+    await manager.query(
+      `INSERT INTO denied_access_tokens (jti, expires_at)
+       VALUES ($1, to_timestamp($2))
+       ON CONFLICT (jti) DO UPDATE SET expires_at = EXCLUDED.expires_at`,
+      [jti, expSec],
+    );
   }
 
   async has(jti: string): Promise<boolean> {
-    const found = await this.client().exists(denyKey(ISSUER, jti));
-    return found === 1;
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    await this.redis?.quit();
-    this.redis = undefined;
-  }
-
-  private client(): Redis {
-    if (!this.redis) {
-      const redis = createJobsRedis({ lazyConnect: true, maxRetriesPerRequest: 1 });
-      redis.on("error", () => {
-        // The failing command rejects. This listener only keeps the process alive.
-      });
-      this.redis = redis;
-    }
-    return this.redis;
+    if (!dataSource.isInitialized) await dataSource.initialize();
+    const rows: unknown[] = await dataSource.query(
+      `SELECT 1 FROM denied_access_tokens WHERE jti = $1 AND expires_at > now()`,
+      [jti],
+    );
+    return rows.length > 0;
   }
 }
