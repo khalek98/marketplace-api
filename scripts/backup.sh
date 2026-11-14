@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Logical backup of marketplace DB (pg_dump -Fc via compose Postgres image).
-# Credentials from env (with-secrets.sh / SKIP_VAULT=1). Destination: ./backups/
+# Credentials from env (with-secrets.sh / SKIP_VAULT=1).
+# The file stays in ./backups/ so restore-drill can read it. When STORAGE_BUCKET
+# is set, the same bytes are also stored as dumps/<filename>.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -36,7 +38,7 @@ fi
 # Client is the compose Postgres image: a host pg_dump is often an older major
 # than postgres:16. It dials DB_HOST:DB_PORT for real.
 # Loopback inside the container is not the operator machine, so 127.0.0.1 is
-# rewritten to host.docker.internal; the port stays the one from env.
+# rewritten to host.docker.internal. That name is on the db service via extra_hosts.
 # Transaction-mode PgBouncer (21111) is the wrong target — pg_dump needs a session.
 DUMP_HOST="$DB_HOST"
 case "$DB_HOST" in
@@ -44,7 +46,6 @@ case "$DB_HOST" in
 esac
 
 docker compose run --rm -T --no-deps \
-  --add-host=host.docker.internal:host-gateway \
   -e PGPASSWORD="$DB_PASSWORD" \
   -v "$BACKUP_DIR:/backups" \
   --entrypoint pg_dump \
@@ -57,3 +58,7 @@ docker compose run --rm -T --no-deps \
   -f "/backups/$(basename "$OUT")"
 
 echo "$OUT"
+
+if [ -n "${STORAGE_BUCKET:-}" ]; then
+  node "$ROOT/scripts/upload-dump.mjs" "$OUT"
+fi
