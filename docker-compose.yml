@@ -137,8 +137,10 @@ services:
   # reads stay closed. Ports sit outside 21110–21150 and the lecture's 22600.
   garage:
     build: ./garage
+    # S3 is published by the `s3` proxy on 21160. Garage stays on the compose network.
+    expose:
+      - "9000"
     ports:
-      - "21160:9000"
       - "21163:3903"
     environment:
       GARAGE_ADMIN_TOKEN: hw26-admin-token
@@ -153,6 +155,33 @@ services:
       timeout: 5s
       retries: 40
       start_period: 5s
+
+  # Clients, including presigned URLs, use 21160. The proxy forwards to Garage
+  # and rewrites only the expired-signature 400 into the 403 S3 would send.
+  s3:
+    image: node:22-alpine
+    command: ["node", "/opt/s3-proxy.mjs"]
+    volumes:
+      - ./garage/s3-proxy.mjs:/opt/s3-proxy.mjs:ro
+    ports:
+      - "21160:21160"
+    environment:
+      UPSTREAM: http://garage:9000
+      LISTEN_PORT: "21160"
+    depends_on:
+      garage:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:21160/hw26-files/does-not-exist').then(r=>process.exit(r.status===403?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 20
 
   redis-jobs:
     image: redis:8-alpine

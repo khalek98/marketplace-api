@@ -1,16 +1,16 @@
 import { randomUUID } from "node:crypto";
 
-import { HeadObjectCommand, NotFound, PutObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { HeadObjectCommand, NotFound } from "@aws-sdk/client-s3";
 import { Injectable, OnModuleInit } from "@nestjs/common";
 import { QueryFailedError } from "typeorm";
 
 import { ApplicationError } from "../common/errors/application-error";
+import { readStorageEnv } from "../config/env.schema";
 import dataSource from "../data-source";
 import { FileRecord } from "../entities/file.entity";
 import { Product } from "../entities/product.entity";
-import { readStorageEnv } from "../config/env.schema";
 import { createStorageClient } from "../storage/client";
+import { presignPut } from "../storage/presign";
 import { extensionFor, MULTIPART_THRESHOLD_BYTES, PRESIGN_TTL_SECONDS } from "./content-types";
 import { CommitBody, IntentBody, IntentRequest, ParsedIntent } from "./uploads.types";
 
@@ -118,17 +118,7 @@ export class UploadsService implements OnModuleInit {
   }
 
   private async withUploadUrl(row: FileRecord): Promise<IntentBody> {
-    const client = createStorageClient();
-    const bucket = readStorageEnv().STORAGE_BUCKET;
-    const url = await getSignedUrl(
-      client,
-      new PutObjectCommand({
-        Bucket: bucket,
-        Key: row.objectKey,
-        ContentType: row.contentType,
-      }),
-      { expiresIn: PRESIGN_TTL_SECONDS },
-    );
+    const url = await presignPut(row.objectKey, row.contentType, PRESIGN_TTL_SECONDS);
     return {
       id: row.id,
       object_key: row.objectKey,
@@ -173,7 +163,12 @@ export class UploadsService implements OnModuleInit {
       relations: { seller: true },
     });
     if (!product) {
-      throw new ApplicationError(404, "Product not found", `Product '${productId}' does not exist.`, "product-not-found");
+      throw new ApplicationError(
+        404,
+        "Product not found",
+        `Product '${productId}' does not exist.`,
+        "product-not-found",
+      );
     }
     if (product.seller.id !== ownerId) {
       throw new ApplicationError(
@@ -212,12 +207,7 @@ function parseIntent(body: IntentRequest): ParsedIntent {
   }
 
   if (body.purpose !== "avatar" && body.purpose !== "product_photo") {
-    throw new ApplicationError(
-      400,
-      "Invalid purpose",
-      "purpose must be avatar or product_photo.",
-      "invalid-purpose",
-    );
+    throw new ApplicationError(400, "Invalid purpose", "purpose must be avatar or product_photo.", "invalid-purpose");
   }
 
   const productId = body.product_id == null || body.product_id === "" ? null : body.product_id;
