@@ -46,6 +46,7 @@
     "demo:rbac": "bash scripts/with-secrets.sh dev node dist/demo-rbac.js",
     "demo:upload": "bash scripts/with-secrets.sh dev node dist/demo-upload.js",
     "demo:multipart": "bash scripts/with-secrets.sh dev node dist/demo-multipart.js",
+    "demo:cdn": "bash scripts/with-secrets.sh dev node dist/demo-cdn.js",
     "report": "bash scripts/with-secrets.sh dev node dist/report.js"
   },
   "dependencies": {
