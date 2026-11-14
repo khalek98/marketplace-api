@@ -19,6 +19,8 @@ tags:
     description: Marketplace catalog operations.
   - name: Orders
     description: Order placement and retrieval operations.
+  - name: Uploads
+    description: Presigned upload intent and commit. File bytes do not pass through this API.
 
 paths:
   /auth/login:
@@ -418,6 +420,125 @@ paths:
         "500":
           $ref: "#/components/responses/InternalServerError"
 
+  /uploads/intent:
+    post:
+      tags:
+        - Uploads
+      operationId: createUploadIntent
+      summary: Ask for a presigned upload
+      description: >
+        Checks the caller, builds the object key on the server, and stores a
+        pending row. The response URL accepts one PUT straight to storage.
+        The filename field is ignored and never becomes part of the key.
+        A repeated Idempotency-Key with the same body returns the same row
+        and a fresh URL while the upload is still pending.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 255
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadIntentRequest"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: A pending upload, or the original row when the key is replayed.
+          headers:
+            Idempotency-Replay:
+              description: Present with value `true` when this is a replay.
+              schema:
+                type: string
+                enum:
+                  - "true"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadIntent"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: The access token is missing, expired, or not signed by the active key.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: The token is valid, but the caller does not sell this product.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          description: The declared size is above the single-PUT threshold.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "415":
+          description: content_type is not in the allowlist.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /uploads/{id}/commit:
+    post:
+      tags:
+        - Uploads
+      operationId: commitUpload
+      summary: Confirm that the object arrived
+      description: >
+        HeadObject must see the bytes. A commit with nothing stored returns
+        409 and leaves the row pending. Only the owner can commit.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The row is completed and the stored size matches.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadCommit"
+        "401":
+          description: The access token is missing, expired, or not signed by the active key.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: The token is valid, but this file belongs to someone else.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -788,6 +909,99 @@ components:
           type: integer
           minimum: 0
           maximum: 9007199254740991
+
+    UploadIntentRequest:
+      type: object
+      required:
+        - content_type
+        - purpose
+      properties:
+        content_type:
+          type: string
+          enum:
+            - image/jpeg
+            - image/png
+            - image/webp
+        purpose:
+          type: string
+          enum:
+            - avatar
+            - product_photo
+        product_id:
+          type: string
+          description: Required when purpose is product_photo. Must be omitted for an avatar.
+        size_bytes:
+          type: integer
+          minimum: 0
+          maximum: 8388608
+          description: Declared size. Above 8 MiB the single PUT is refused.
+        filename:
+          type: string
+          description: Ignored. The server generates the object key.
+    UploadIntent:
+      type: object
+      required:
+        - id
+        - object_key
+        - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        object_key:
+          type: string
+        status:
+          type: string
+          enum:
+            - pending
+            - completed
+        expires_in:
+          type: integer
+          description: Seconds the presigned URL stays valid. Absent once the upload is completed.
+        upload:
+          type: object
+          required:
+            - method
+            - url
+            - headers
+          properties:
+            method:
+              type: string
+              enum:
+                - PUT
+            url:
+              type: string
+            headers:
+              type: object
+              required:
+                - Content-Type
+              properties:
+                Content-Type:
+                  type: string
+                  description: The client must send this header. It is covered by the signature.
+    UploadCommit:
+      type: object
+      required:
+        - id
+        - object_key
+        - status
+        - size_bytes
+        - etag
+      properties:
+        id:
+          type: string
+          format: uuid
+        object_key:
+          type: string
+        status:
+          type: string
+          enum:
+            - completed
+        size_bytes:
+          type: integer
+          minimum: 0
+        etag:
+          type: string
 
     Problem:
       type: object

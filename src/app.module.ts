@@ -8,6 +8,7 @@ import { validate } from "./config/env.schema";
 import { DatabaseModule } from "./database/database.module";
 import { OrdersModule } from "./orders/orders.module";
 import { ProductsModule } from "./products/products.module";
+import { UploadsModule } from "./uploads/uploads.module";
 
 @Module({
   controllers: [AppController],
@@ -22,6 +23,7 @@ import { ProductsModule } from "./products/products.module";
     AuthModule,
     ProductsModule,
     OrdersModule,
+    UploadsModule,
   ],
 })
 export class AppModule {}
