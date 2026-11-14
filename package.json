@@ -47,6 +47,8 @@
     "demo:upload": "bash scripts/with-secrets.sh dev node dist/demo-upload.js",
     "demo:multipart": "bash scripts/with-secrets.sh dev node dist/demo-multipart.js",
     "demo:cdn": "bash scripts/with-secrets.sh dev node dist/demo-cdn.js",
+    "demo:sweep": "bash scripts/with-secrets.sh dev node dist/demo-sweep.js",
+    "sweep:pending": "bash scripts/with-secrets.sh dev node dist/sweep-worker.js",
     "report": "bash scripts/with-secrets.sh dev node dist/report.js"
   },
   "dependencies": {
