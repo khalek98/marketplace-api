@@ -327,7 +327,7 @@ npm run demo:queue
 | `STORAGE_ENDPOINT`     | ні для старту API             | S3 API. Порожньо — справжній AWS. Локальний стенд: `http://127.0.0.1:21160` (Garage). Не секрет                                                                                                 |
 | `STORAGE_REGION`       | ні для старту API             | Регіон підпису. Для стенда — `garage`, має збігатися з `s3_region` у `garage/garage.toml`                                                                                                       |
 | `STORAGE_BUCKET`       | ні для старту API             | Бакет `hw26-files`. Не секрет                                                                                                                                                                   |
-| `STORAGE_ACCESS_KEY`   | ні для старту API             | Ключ доступу до сховища (`GK` + 24 hex). **Джерело: сховище**. У `.env.example` порожньо. dev і prod — різні пари                                                                                |
+| `STORAGE_ACCESS_KEY`   | ні для старту API             | Ключ доступу до сховища (`GK` + 24 hex). **Джерело: сховище**. У `.env.example` порожньо. dev і prod — різні пари                                                                               |
 | `STORAGE_SECRET_KEY`   | ні для старту API             | Секрет того ж ключа (64 hex). **Джерело: сховище**. Ним підписується presigned URL                                                                                                              |
 
 HTTP rate-limit: **ковзне вікно** в Redis (Lua + ZSET) — не дозволяємо сплеск до 2× ліміту на межі фіксованого вікна; лічильник спільний для всіх подів.
@@ -654,12 +654,12 @@ Access-токен — JWT з алгоритмом **ES256** (крива P-256). 
 
 ### Змінні
 
-| Змінна | Що це | Джерело | Формат |
-| --- | --- | --- | --- |
-| `JWT_KID` | id активного ключа; лежить у заголовку access-токена | сховище | рядок, без дефолту в схемі |
-| `JWT_PRIVATE_KEY` | підпис access-токенів | сховище | base64 від PKCS#8 PEM (P-256) |
-| `JWT_PUBLIC_KEY` | перевірка підпису | сховище | base64 від SPKI PEM (P-256) |
-| `REFRESH_TOKEN_PEPPER` | перець HMAC refresh-токена; у базі лежить хеш, не сам токен | сховище | рядок, без дефолту в схемі |
+| Змінна                 | Що це                                                       | Джерело | Формат                        |
+| ---------------------- | ----------------------------------------------------------- | ------- | ----------------------------- |
+| `JWT_KID`              | id активного ключа; лежить у заголовку access-токена        | сховище | рядок, без дефолту в схемі    |
+| `JWT_PRIVATE_KEY`      | підпис access-токенів                                       | сховище | base64 від PKCS#8 PEM (P-256) |
+| `JWT_PUBLIC_KEY`       | перевірка підпису                                           | сховище | base64 від SPKI PEM (P-256)   |
+| `REFRESH_TOKEN_PEPPER` | перець HMAC refresh-токена; у базі лежить хеш, не сам токен | сховище | рядок, без дефолту в схемі    |
 
 `DB_URL` і `REDIS_URL` лишаються в таблиці [Configuration](#змінні-середовища) і теж приходять зі сховища. Денилист access-токенів пишеться в Redis черги (`REDIS_QUEUE_URL`, `noeviction`, ключ `deny:<iss>:<jti>`), не в LRU-кеш.
 
@@ -689,12 +689,117 @@ Access-токен — JWT з алгоритмом **ES256** (крива P-256). 
 
 Відбиток — перші 8 hex sha256 від публічного ключа у форматі SPKI DER. Той самий рядок процес друкує перед `listen`: `[jwt] kid=… fp=…`. PEM і base64 приватного ключа тут не наводяться.
 
-| Оточення | kid | відбиток |
-| --- | --- | --- |
-| dev | `local-k1` | `3bf6f0ae` |
-| prod | `local-k1` | `3bf6f0ae` |
+| Оточення | kid        | відбиток   |
+| -------- | ---------- | ---------- |
+| dev      | `local-k1` | `3bf6f0ae` |
+| prod     | `local-k1` | `3bf6f0ae` |
 
 Slug `prod` у сховищі повернув ту саму пару, що й dev. Однаковий відбиток означає, що оточення ще не розділені: ключ dev підпише токен, який prod прийме. У prod має з’явитись інша пара і інший перець; після заміни рядок prod у цій таблиці треба оновити з нового `fp=`.
+
+## Files
+
+Байтів файла в API немає. `POST /uploads/intent` під тим самим access-гардом, що й замовлення, перевіряє `content_type` (`image/jpeg`, `image/png`, `image/webp`) і сам збирає ключ `uploads/{userId}/{uuid}.{ext}`. Поле `filename` відкидається: `../../etc/passwd` у ключ не потрапляє. Клієнт кладе тіло presigned PUT-ом прямо в бакет. `POST /uploads/:id/commit` робить `HeadObject` і лише тоді ставить `completed`. Немає об’єкта — 409, рядок лишається `pending`.
+
+Журнал — таблиця `files` (міграція `AddFiles`). Список файлів користувача читається з неї, не через `ListObjects`.
+
+### Змінні
+
+| Змінна               | Джерело                                                                                                         |
+| -------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `STORAGE_ENDPOINT`   | Несекрет. Порожньо — справжній AWS. Локальний стенд: `http://127.0.0.1:21160` (проксі перед Garage).            |
+| `STORAGE_REGION`     | Несекрет. `garage`, те саме значення, що `s3_region` у `garage/garage.toml`.                                    |
+| `STORAGE_BUCKET`     | Несекрет. `hw26-files`.                                                                                         |
+| `STORAGE_ACCESS_KEY` | Сейф. dev і prod — різні пари. Стенд імпортує фіксовану пару `GK` + 24 hex: Garage не приймає довільний пароль. |
+| `STORAGE_SECRET_KEY` | Сейф. 64 hex. Цим секретом підписується presigned URL.                                                          |
+
+`readStorageEnv()` викликається лише там, де є S3. Логін і замовлення стартують без цих змінних.
+
+### Строк presigned
+
+Аватарка з форми живе **180 секунд**. Людина заповнює форму зараз, не через тиждень. Стеля SigV4 — 7 діб, але URL помирає разом із ключем, яким його підписано; на короткоживучій ролі це часто година, тож «7 днів, бо можна» на стенді з довгим ключем у проді не доживає. У лист такий URL не кладемо.
+
+`demo:upload` перевіряє протухання окремим викликом того самого `presignPut` на **2 секунди** і чекає 3. Інакше демо стояло б три хвилини. Garage на протухлий підпис відповідає `400 Date is too old`. S3 на це відповідає 403. Проксі `garage/s3-proxy.mjs` на порту `21160` переписує лише цей один 400 на 403. Битий підпис Garage і так віддає 403 (`Invalid signature`), його проксі не чіпає.
+
+### Multipart
+
+Поріг — **8 МіБ**. Менше або рівно — один `PutObject`. Більше — `CreateMultipartUpload`. Розмір частини: `max(5 МіБ, ceil(розмір / 10 000))`. Частин не більше 10 000, а всі, крім останньої, не менші за 5 МіБ, інакше `Complete` відповість `EntityTooSmall`. Демо ріже файл на 5 + 5 + 1 МіБ. До `Complete` об’єкта немає (`HeadObject` → 404), хоча частини вже лежать. ETag зібраного об’єкта має суфікс `-N` — це кількість частин, не MD5 файла.
+
+Повторний `Idempotency-Key` з тим самим тілом повертає той самий рядок. Інше тіло з тим самим ключем — 409. Це не таблиця `api_requests`: вона лишається про замовлення.
+
+### Роздача
+
+Публічний ассет — `assets/{name}.{8 hex sha256}.{ext}`, заголовок `Cache-Control: public, max-age=31536000, immutable` стоїть на об’єкті в момент запису. Edge (`src/edge.ts`, порт `21162`) забирає об’єкт своїми креденшелами і кешує його в пам’яті. Другий запит того самого ключа віддає `X-Cache: HIT` і в бакет не ходить. Новий вміст публікується під новим хешем. Старий URL доживає свій `max-age`, інвалідації немає.
+
+Це локальний edge, не CloudFront. Анонімний GET у бакет дає 403. Website-режим Garage не вмикається.
+
+Для справжнього CloudFront та сама ідея — бакет закритий, читає лише дистрибуція. Політика в `policies/cloudfront-oac-bucket-policy.json`. На Garage вона не застосовується: bucket policy там відповідає 501. Без `Condition` / `AWS:SourceArn` принципал `cloudfront.amazonaws.com` відкрив би бакет будь-якій дистрибуції у світі.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowCloudFrontServicePrincipalReadOnly",
+      "Effect": "Allow",
+      "Principal": { "Service": "cloudfront.amazonaws.com" },
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::hw26-files/*",
+      "Condition": {
+        "StringEquals": {
+          "AWS:SourceArn": "arn:aws:cloudfront::111122223333:distribution/E1234567890ABC"
+        }
+      }
+    }
+  ]
+}
+```
+
+Приватний файл клієнту не віддаємо тижневим presigned. План: `GET /files/:id` під гардом відповідає 302 на свіжий підпис близько 60 секунд. Гард працює на кожен запит, байти все одно йдуть повз API. Signed cookies CloudFront — інший підпис і інший ключ, не цей `STORAGE_SECRET_KEY`; локально його підпис нічим перевірити.
+
+### Хвости
+
+`pending` старший за добу має прибирати джоба на вже наявній черзі BullMQ: `AbortMultipartUpload`, `DeleteObject`, видалити рядок. Інакше в бакеті лишаються сироти, про які база не знає. Джоба ще не запущена.
+
+Окремо, уже на бакеті справжнього S3, правило lifecycle `AbortIncompleteMultipartUpload` через 7 днів. Правило «видалити об’єкти старші за 30 днів» ці незавершені завантаження не чіпає. Garage це правило не виконує.
+
+Дамп `scripts/backup.sh` досі лягає в `backups/`. Наступне місце для нього — об’єкт у цьому бакеті (префікс `dumps/`). Glacier — не повільний S3: об’єкт треба спершу відновити, тож обіцянка підняти базу за годину вже інша. `scripts/restore-drill.sh` від цього не зникає: lifecycle не доводить, що дамп розгортається.
+
+### Прогони
+
+`demo:upload` (API спочатку на `21170`, після зупинки commit на `21171`):
+
+```text
+intent=200
+key-from-server=1
+api-alive=0
+put-offline=200
+commit=200
+commit-without-bytes=409
+tampered=403
+expired=403
+```
+
+`demo:multipart` двічі поспіль, файл 11 534 336 байт:
+
+```text
+head-before-complete=404
+resumed-parts=1
+complete=200
+size-match=1
+etag-multipart=1
+```
+
+`demo:cdn` двічі поспіль:
+
+```text
+direct=403
+edge-miss=200
+edge-hit=200
+cache-hit=1
+new-name=1
+new-url=200
+content-changed=1
+```
 
 ## Grading
 
@@ -724,6 +829,11 @@ export JWT_PRIVATE_KEY="$(cat /tmp/jwt-priv.b64)"
 export JWT_PUBLIC_KEY="$(cat /tmp/jwt-pub.b64)"
 export REFRESH_TOKEN_PEPPER=local-demo-pepper
 rm -f /tmp/jwt-priv.b64 /tmp/jwt-pub.b64
+export STORAGE_ENDPOINT=http://127.0.0.1:21160
+export STORAGE_REGION=garage
+export STORAGE_BUCKET=hw26-files
+export STORAGE_ACCESS_KEY=GK000000000000000000000026
+export STORAGE_SECRET_KEY=0000000000000000000000000000000000000000000000000000000000000026
 npm ci
 ```
 
@@ -748,6 +858,8 @@ export DB_HOST=127.0.0.1 DB_PORT=21110 DB_USER=app_user_a DB_PASSWORD=app-v1-pas
 bash scripts/with-secrets.sh dev bash scripts/backup.sh
 bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh
 ```
+
+Файли — після `npm run build`. Garage і проксі S3 вже підняті тим самим `docker compose up -d --wait` (порт `21160`). `npm run demo:upload`, потім `npm run demo:multipart` двічі, потім `npm run demo:cdn`. Що означають числа — у секції [Files](#files).
 
 ## Optional: Infisical
 
@@ -835,4 +947,5 @@ docker compose -f infisical/docker-compose.yml down
 - **2026-10-14 (HW-19):** async `order.placed` через RabbitMQ (topic `shop.events`, quorum + DLQ, ручний ack, `prefetch=20`, ідемпотентні `order_notifications`). Публікація після checkout COMMIT — dual write до outbox лишається відкритим.
 - **2026-11-04 (HW-22):** transactional outbox у тій самій TX, що checkout; relay зі `SKIP LOCKED`; inbox `processed_messages` + `Idempotency-Key` у `api_requests`; демо `demo:outbox|crash-write|crash-relay`. Dual write між Postgres і брокером закрито at-least-once + ідемпотентним ефектом.
 - **2026-11-04 (HW-23):** два Redis (кеш `allkeys-lru` :21140, черга `noeviction` :21141); cache-aside + jitter + single-flight; сесії й rate-limit на queue-Redis; BullMQ (retry, `jobId`, `upsertJobScheduler`); демо `demo:cache|session|ratelimit|queue`.
+- **2026-11-14:** файли йдуть у приватний Garage через presigned `intent`/`commit`; multipart доливає частини після обриву; публічні ассети віддає локальний edge з хешем вмісту в імені. Креденшели сховища — у сейф, dev і prod різні.
 - Наступні зміни архітектури додаються сюди з причиною та наслідками, а не приховуються переписуванням історії.
