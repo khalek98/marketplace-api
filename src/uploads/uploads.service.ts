@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
 
-import { HeadObjectCommand, NotFound } from "@aws-sdk/client-s3";
+import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
+  CreateMultipartUploadCommand,
+  HeadObjectCommand,
+  ListPartsCommand,
+  NotFound,
+} from "@aws-sdk/client-s3";
 import { Injectable, OnModuleInit } from "@nestjs/common";
 import { QueryFailedError } from "typeorm";
 
@@ -10,9 +17,15 @@ import dataSource from "../data-source";
 import { FileRecord } from "../entities/file.entity";
 import { Product } from "../entities/product.entity";
 import { createStorageClient } from "../storage/client";
-import { presignPut } from "../storage/presign";
-import { extensionFor, MULTIPART_THRESHOLD_BYTES, PRESIGN_TTL_SECONDS } from "./content-types";
-import { CommitBody, IntentBody, IntentRequest, ParsedIntent } from "./uploads.types";
+import { presignPut, presignUploadPart } from "../storage/presign";
+import {
+  extensionFor,
+  MULTIPART_THRESHOLD_BYTES,
+  partCountFor,
+  partSizeFor,
+  PRESIGN_TTL_SECONDS,
+} from "./content-types";
+import { CommitBody, IntentBody, IntentRequest, ParsedIntent, PartPlan } from "./uploads.types";
 
 @Injectable()
 export class UploadsService implements OnModuleInit {
@@ -34,6 +47,7 @@ export class UploadsService implements OnModuleInit {
 
     const id = randomUUID();
     const objectKey = `uploads/${ownerId}/${id}.${parsed.extension}`;
+    const uploadId = await this.beginMultipart(objectKey, parsed);
     try {
       await dataSource.getRepository(FileRecord).insert({
         id,
@@ -42,13 +56,14 @@ export class UploadsService implements OnModuleInit {
         status: "pending",
         contentType: parsed.contentType,
         sizeBytes: parsed.sizeBytes === null ? null : String(parsed.sizeBytes),
-        uploadId: null,
+        uploadId,
         etag: null,
         purpose: parsed.purpose,
         productId: parsed.productId,
         idempotencyKey: key,
       });
     } catch (error) {
+      if (uploadId) await this.abortMultipart(objectKey, uploadId);
       if (!isUniqueViolation(error)) throw error;
       const raced = await this.findByIdempotency(ownerId, key);
       if (!raced) throw error;
@@ -56,7 +71,7 @@ export class UploadsService implements OnModuleInit {
     }
 
     const created = await this.requireOwn(id, ownerId);
-    return { replay: false, body: await this.withUploadUrl(created) };
+    return { replay: false, body: await this.describe(created) };
   }
 
   async commit(ownerId: string, id: string): Promise<CommitBody> {
@@ -99,6 +114,72 @@ export class UploadsService implements OnModuleInit {
     };
   }
 
+  async missingParts(ownerId: string, id: string): Promise<PartPlan> {
+    const row = await this.pendingMultipart(ownerId, id);
+    const size = Number(row.sizeBytes);
+    const partSize = partSizeFor(size);
+    const expected = partCountFor(size);
+    const present = await this.storedParts(row);
+    const have = new Set(present.map((part) => part.part_number));
+    const missing: PartPlan["missing"] = [];
+    for (let partNumber = 1; partNumber <= expected; partNumber += 1) {
+      if (have.has(partNumber)) continue;
+      missing.push({
+        part_number: partNumber,
+        url: await presignUploadPart(row.objectKey, row.uploadId as string, partNumber, PRESIGN_TTL_SECONDS),
+      });
+    }
+    return { part_size: partSize, present, missing };
+  }
+
+  async completeMultipart(ownerId: string, id: string): Promise<CommitBody> {
+    const row = await this.pendingMultipart(ownerId, id);
+    const expected = partCountFor(Number(row.sizeBytes));
+    const present = await this.storedParts(row);
+    if (present.length !== expected || present.some((part, index) => part.part_number !== index + 1)) {
+      throw new ApplicationError(
+        409,
+        "Parts missing",
+        "Complete waits until every part is stored. Upload the missing ones first.",
+        "parts-missing",
+      );
+    }
+
+    const bucket = readStorageEnv().STORAGE_BUCKET;
+    await createStorageClient().send(
+      new CompleteMultipartUploadCommand({
+        Bucket: bucket,
+        Key: row.objectKey,
+        UploadId: row.uploadId as string,
+        MultipartUpload: {
+          Parts: present.map((part) => ({ PartNumber: part.part_number, ETag: part.etag })),
+        },
+      }),
+    );
+
+    const head = await this.head(row.objectKey);
+    if (!head || head.size !== Number(row.sizeBytes)) {
+      throw new ApplicationError(
+        409,
+        "Size mismatch",
+        "The completed object size does not match the size declared at intent.",
+        "size-mismatch",
+      );
+    }
+
+    row.status = "completed";
+    row.sizeBytes = String(head.size);
+    row.etag = head.etag;
+    await dataSource.getRepository(FileRecord).save(row);
+    return {
+      id: row.id,
+      object_key: row.objectKey,
+      status: "completed",
+      size_bytes: head.size,
+      etag: head.etag,
+    };
+  }
+
   private async replay(row: FileRecord, parsed: ParsedIntent): Promise<{ replay: boolean; body: IntentBody }> {
     if (!sameIntent(row, parsed)) {
       throw new ApplicationError(
@@ -114,7 +195,37 @@ export class UploadsService implements OnModuleInit {
         body: { id: row.id, object_key: row.objectKey, status: row.status },
       };
     }
-    return { replay: true, body: await this.withUploadUrl(row) };
+    return { replay: true, body: await this.describe(row) };
+  }
+
+  private async describe(row: FileRecord): Promise<IntentBody> {
+    if (row.status === "completed") {
+      return { id: row.id, object_key: row.objectKey, status: row.status };
+    }
+    if (row.uploadId && row.sizeBytes !== null) return this.withPartUrls(row);
+    return this.withUploadUrl(row);
+  }
+
+  private async withPartUrls(row: FileRecord): Promise<IntentBody> {
+    const size = Number(row.sizeBytes);
+    const partSize = partSizeFor(size);
+    const count = partCountFor(size);
+    const parts: Array<{ part_number: number; url: string }> = [];
+    for (let partNumber = 1; partNumber <= count; partNumber += 1) {
+      parts.push({
+        part_number: partNumber,
+        url: await presignUploadPart(row.objectKey, row.uploadId as string, partNumber, PRESIGN_TTL_SECONDS),
+      });
+    }
+    return {
+      id: row.id,
+      object_key: row.objectKey,
+      status: row.status,
+      expires_in: PRESIGN_TTL_SECONDS,
+      upload_id: row.uploadId as string,
+      part_size: partSize,
+      parts,
+    };
   }
 
   private async withUploadUrl(row: FileRecord): Promise<IntentBody> {
@@ -179,6 +290,87 @@ export class UploadsService implements OnModuleInit {
       );
     }
   }
+
+  private async beginMultipart(objectKey: string, parsed: ParsedIntent): Promise<string | null> {
+    if (parsed.sizeBytes === null || parsed.sizeBytes <= MULTIPART_THRESHOLD_BYTES) return null;
+    const created = await createStorageClient().send(
+      new CreateMultipartUploadCommand({
+        Bucket: readStorageEnv().STORAGE_BUCKET,
+        Key: objectKey,
+        ContentType: parsed.contentType,
+      }),
+    );
+    if (!created.UploadId) {
+      throw new ApplicationError(
+        502,
+        "Upload was not started",
+        "Storage did not return an upload id.",
+        "upload-not-started",
+      );
+    }
+    return created.UploadId;
+  }
+
+  private async abortMultipart(objectKey: string, uploadId: string): Promise<void> {
+    await createStorageClient()
+      .send(
+        new AbortMultipartUploadCommand({
+          Bucket: readStorageEnv().STORAGE_BUCKET,
+          Key: objectKey,
+          UploadId: uploadId,
+        }),
+      )
+      .catch(() => undefined);
+  }
+
+  private async pendingMultipart(ownerId: string, id: string): Promise<FileRecord> {
+    const row = await dataSource.getRepository(FileRecord).findOne({ where: { id } });
+    if (!row) {
+      throw new ApplicationError(404, "File not found", `File '${id}' does not exist.`, "file-not-found");
+    }
+    if (row.ownerId !== ownerId) {
+      throw new ApplicationError(403, "Not the file owner", "This file belongs to another user.", "not-file-owner");
+    }
+    if (!row.uploadId || row.sizeBytes === null) {
+      throw new ApplicationError(
+        409,
+        "Not a multipart upload",
+        "This file was started as a single PUT.",
+        "not-multipart",
+      );
+    }
+    if (row.status === "completed") {
+      throw new ApplicationError(
+        409,
+        "Already completed",
+        "This multipart upload is already complete.",
+        "already-completed",
+      );
+    }
+    return row;
+  }
+
+  private async storedParts(row: FileRecord): Promise<Array<{ part_number: number; etag: string }>> {
+    const client = createStorageClient();
+    const bucket = readStorageEnv().STORAGE_BUCKET;
+    const parts: Array<{ part_number: number; etag: string }> = [];
+    let marker: string | undefined;
+    do {
+      const page = await client.send(
+        new ListPartsCommand({
+          Bucket: bucket,
+          Key: row.objectKey,
+          UploadId: row.uploadId as string,
+          PartNumberMarker: marker,
+        }),
+      );
+      for (const part of page.Parts ?? []) {
+        if (part.PartNumber && part.ETag) parts.push({ part_number: part.PartNumber, etag: part.ETag });
+      }
+      marker = page.IsTruncated ? page.NextPartNumberMarker : undefined;
+    } while (marker);
+    return parts.sort((left, right) => left.part_number - right.part_number);
+  }
 }
 
 function requireIdempotencyKey(value: string | undefined): string {
@@ -230,14 +422,6 @@ function parseIntent(body: IntentRequest): ParsedIntent {
   if (body.size_bytes !== undefined && body.size_bytes !== null) {
     if (typeof body.size_bytes !== "number" || !Number.isInteger(body.size_bytes) || body.size_bytes < 0) {
       throw new ApplicationError(400, "Invalid size", "size_bytes must be a non-negative integer.", "invalid-size");
-    }
-    if (body.size_bytes > MULTIPART_THRESHOLD_BYTES) {
-      throw new ApplicationError(
-        413,
-        "Multipart required",
-        "Files larger than 8 MiB use a multipart upload.",
-        "multipart-required",
-      );
     }
     sizeBytes = body.size_bytes;
   }

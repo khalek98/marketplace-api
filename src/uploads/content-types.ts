@@ -1,8 +1,20 @@
 /** Avatar form is filled now, not next week. SigV4 allows 7 days; this does not. */
 export const PRESIGN_TTL_SECONDS = 180;
 
-/** Photos at or under this size are one PutObject. Larger files wait for multipart. */
+/** Photos at or under this size are one PutObject. Larger files are multipart. */
 export const MULTIPART_THRESHOLD_BYTES = 8 * 1024 * 1024;
+
+/** Every part except the last must be at least this big, or Complete returns EntityTooSmall. */
+export const MIN_PART_BYTES = 5 * 1024 * 1024;
+
+/** S3 allows at most 10 000 parts, so the part grows with the file. */
+export function partSizeFor(fileSize: number): number {
+  return Math.max(MIN_PART_BYTES, Math.ceil(fileSize / 10_000));
+}
+
+export function partCountFor(fileSize: number): number {
+  return Math.ceil(fileSize / partSizeFor(fileSize));
+}
 
 const EXTENSION_BY_TYPE = {
   "image/jpeg": "jpg",

@@ -19,6 +19,15 @@ export type IntentBody = {
     url: string;
     headers: { "Content-Type": string };
   };
+  upload_id?: string;
+  part_size?: number;
+  parts?: Array<{ part_number: number; url: string }>;
+};
+
+export type PartPlan = {
+  part_size: number;
+  present: Array<{ part_number: number; etag: string }>;
+  missing: Array<{ part_number: number; url: string }>;
 };
 
 export type CommitBody = {

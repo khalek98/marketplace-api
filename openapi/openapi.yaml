@@ -539,6 +539,95 @@ paths:
         "500":
           $ref: "#/components/responses/InternalServerError"
 
+  /uploads/{id}/parts:
+    post:
+      tags:
+        - Uploads
+      operationId: listUploadParts
+      summary: List parts already stored
+      description: >
+        Asks the storage which parts of a multipart upload arrived.
+        The response signs URLs only for the missing part numbers.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Parts already in storage, and URLs for the ones that are not.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadParts"
+        "401":
+          description: The access token is missing, expired, or not signed by the active key.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: The token is valid, but this file belongs to someone else.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /uploads/{id}/complete:
+    post:
+      tags:
+        - Uploads
+      operationId: completeUpload
+      summary: Assemble a multipart upload
+      description: >
+        Completes the upload from the parts already stored. Before this call
+        the object does not exist. After it, the size matches and the ETag
+        ends with the part count.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The object exists and the row is completed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadCommit"
+        "401":
+          description: The access token is missing, expired, or not signed by the active key.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: The token is valid, but this file belongs to someone else.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -933,8 +1022,7 @@ components:
         size_bytes:
           type: integer
           minimum: 0
-          maximum: 8388608
-          description: Declared size. Above 8 MiB the single PUT is refused.
+          description: Declared size. Above 8 MiB the upload is multipart.
         filename:
           type: string
           description: Ignored. The server generates the object key.
@@ -979,6 +1067,61 @@ components:
                 Content-Type:
                   type: string
                   description: The client must send this header. It is covered by the signature.
+        upload_id:
+          type: string
+          description: Present when the upload is multipart. Parts exist before the object does.
+        part_size:
+          type: integer
+          minimum: 1
+        parts:
+          type: array
+          items:
+            type: object
+            required:
+              - part_number
+              - url
+            properties:
+              part_number:
+                type: integer
+                minimum: 1
+              url:
+                type: string
+    UploadParts:
+      type: object
+      required:
+        - part_size
+        - present
+        - missing
+      properties:
+        part_size:
+          type: integer
+          minimum: 1
+        present:
+          type: array
+          items:
+            type: object
+            required:
+              - part_number
+              - etag
+            properties:
+              part_number:
+                type: integer
+                minimum: 1
+              etag:
+                type: string
+        missing:
+          type: array
+          items:
+            type: object
+            required:
+              - part_number
+              - url
+            properties:
+              part_number:
+                type: integer
+                minimum: 1
+              url:
+                type: string
     UploadCommit:
       type: object
       required:

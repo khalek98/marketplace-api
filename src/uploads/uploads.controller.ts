@@ -3,7 +3,7 @@ import { Response } from "express";
 
 import { ApplicationError } from "../common/errors/application-error";
 import { AccessTokenGuard, RequestWithPrincipal } from "../auth/access-token.guard";
-import { CommitBody, IntentBody, IntentRequest } from "./uploads.types";
+import { CommitBody, IntentBody, IntentRequest, PartPlan } from "./uploads.types";
 import { UploadsService } from "./uploads.service";
 
 @Controller("uploads")
@@ -22,6 +22,18 @@ export class UploadsController {
     const result = await this.uploads.intent(ownerId(req), idempotencyKey, body ?? {});
     if (result.replay) res.setHeader("Idempotency-Replay", "true");
     return result.body;
+  }
+
+  @Post(":id/parts")
+  @HttpCode(200)
+  parts(@Param("id") id: string, @Req() req: RequestWithPrincipal): Promise<PartPlan> {
+    return this.uploads.missingParts(ownerId(req), id);
+  }
+
+  @Post(":id/complete")
+  @HttpCode(200)
+  complete(@Param("id") id: string, @Req() req: RequestWithPrincipal): Promise<CommitBody> {
+    return this.uploads.completeMultipart(ownerId(req), id);
   }
 
   @Post(":id/commit")

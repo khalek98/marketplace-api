@@ -1,4 +1,4 @@
-import { PutObjectCommand } from "@aws-sdk/client-s3";
+import { PutObjectCommand, UploadPartCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 import { readStorageEnv } from "../config/env.schema";
@@ -13,6 +13,25 @@ export async function presignPut(objectKey: string, contentType: string, expires
       Bucket: env.STORAGE_BUCKET,
       Key: objectKey,
       ContentType: contentType,
+    }),
+    { expiresIn },
+  );
+}
+
+export async function presignUploadPart(
+  objectKey: string,
+  uploadId: string,
+  partNumber: number,
+  expiresIn: number,
+): Promise<string> {
+  const env = readStorageEnv();
+  return getSignedUrl(
+    createStorageClient(env),
+    new UploadPartCommand({
+      Bucket: env.STORAGE_BUCKET,
+      Key: objectKey,
+      UploadId: uploadId,
+      PartNumber: partNumber,
     }),
     { expiresIn },
   );
