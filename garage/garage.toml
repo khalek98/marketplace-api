@@ -1,0 +1,19 @@
+# One node is enough to speak the S3 API. Garage is built as a cluster,
+# so this node still needs a layout role before it accepts a single byte.
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "sqlite"
+replication_factor = 1
+
+# Required even for a single node. Dev stand only: it dies with the tmpfs.
+rpc_bind_addr = "[::]:3901"
+rpc_secret = "0000000000000000000000000000000000000000000000000000000000000026"
+
+[s3_api]
+api_bind_addr = "[::]:9000"
+s3_region = "garage"
+
+[admin]
+api_bind_addr = "[::]:3903"
+admin_token = "hw26-admin-token"
+metrics_token = "hw26-metrics-token"

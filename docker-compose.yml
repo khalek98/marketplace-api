@@ -129,6 +129,31 @@ services:
       timeout: 3s
       retries: 30
 
+  # S3-compatible store. MinIO's Docker Hub image is gone (2026-09-11);
+  # Garage is what the lecture stand moved to. The image is built locally
+  # because upstream has no shell, and the bucket must exist before --wait
+  # returns. Dev key is fixed (GK + 64 hex): `key create` would be random
+  # and would not match the grading exports. No website endpoint — anonymous
+  # reads stay closed. Ports sit outside 21110–21150 and the lecture's 22600.
+  garage:
+    build: ./garage
+    ports:
+      - "21160:9000"
+      - "21163:3903"
+    environment:
+      GARAGE_ADMIN_TOKEN: hw26-admin-token
+      GARAGE_ACCESS_KEY_ID: GK000000000000000000000026
+      GARAGE_SECRET_ACCESS_KEY: "0000000000000000000000000000000000000000000000000000000000000026"
+      GARAGE_BUCKET: hw26-files
+    tmpfs:
+      - /var/lib/garage:size=1g
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/garage", "-c", "/etc/garage.toml", "bucket", "info", "hw26-files"]
+      interval: 2s
+      timeout: 5s
+      retries: 40
+      start_period: 5s
+
   redis-jobs:
     image: redis:8-alpine
     ports:
