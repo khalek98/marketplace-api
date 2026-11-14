@@ -17,13 +17,14 @@ import dataSource from "../data-source";
 import { FileRecord } from "../entities/file.entity";
 import { Product } from "../entities/product.entity";
 import { createStorageClient } from "../storage/client";
-import { presignPut, presignUploadPart } from "../storage/presign";
+import { presignGet, presignPut, presignUploadPart } from "../storage/presign";
 import {
   extensionFor,
   MULTIPART_THRESHOLD_BYTES,
   partCountFor,
   partSizeFor,
   PRESIGN_TTL_SECONDS,
+  READ_PRESIGN_SECONDS,
 } from "./content-types";
 import { CommitBody, IntentBody, IntentRequest, ParsedIntent, PartPlan } from "./uploads.types";
 
@@ -112,6 +113,25 @@ export class UploadsService implements OnModuleInit {
       size_bytes: head.size,
       etag: head.etag,
     };
+  }
+
+  async presignRead(ownerId: string, id: string): Promise<string> {
+    const row = await dataSource.getRepository(FileRecord).findOne({ where: { id } });
+    if (!row) {
+      throw new ApplicationError(404, "File not found", `File '${id}' does not exist.`, "file-not-found");
+    }
+    if (row.ownerId !== ownerId) {
+      throw new ApplicationError(403, "Not the file owner", "This file belongs to another user.", "not-file-owner");
+    }
+    if (row.status !== "completed") {
+      throw new ApplicationError(
+        409,
+        "Upload is not complete",
+        "The file is not readable until commit or complete has finished.",
+        "upload-not-complete",
+      );
+    }
+    return presignGet(row.objectKey, READ_PRESIGN_SECONDS);
   }
 
   async missingParts(ownerId: string, id: string): Promise<PartPlan> {

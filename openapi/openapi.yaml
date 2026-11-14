@@ -628,6 +628,52 @@ paths:
         "500":
           $ref: "#/components/responses/InternalServerError"
 
+  /files/{id}:
+    get:
+      tags:
+        - Uploads
+      operationId: readFile
+      summary: Redirect to a one-minute download
+      description: >
+        The guard runs on every request. The response is a 302 to a fresh
+        presigned GET that lives about 60 seconds. File bytes do not pass
+        through this API.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+      responses:
+        "302":
+          description: Location is a presigned GET for the object.
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
+        "401":
+          description: The access token is missing, expired, or not signed by the active key.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: The token is valid, but this file belongs to someone else.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
 components:
   securitySchemes:
     bearerAuth:

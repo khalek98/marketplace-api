@@ -1,6 +1,9 @@
 /** Avatar form is filled now, not next week. SigV4 allows 7 days; this does not. */
 export const PRESIGN_TTL_SECONDS = 180;
 
+/** A private read is a redirect onto a fresh link, not a week-long URL in a message. */
+export const READ_PRESIGN_SECONDS = 60;
+
 /** Photos at or under this size are one PutObject. Larger files are multipart. */
 export const MULTIPART_THRESHOLD_BYTES = 8 * 1024 * 1024;
 
