@@ -324,6 +324,11 @@ npm run demo:queue
 | `DB_AUTH_FILE`         | ні (дефолт `secrets/db_auth`) | Шлях до файла з role + password Postgres (два рядки)                                                                                                                                            |
 | `LOG_LEVEL`            | ні (`info`)                   | `debug` \| `info` \| `warn` \| `error`                                                                                                                                                          |
 | `TIMEOUT_MS`           | ні (`5000`)                   | Таймаут зовнішніх викликів, мс                                                                                                                                                                  |
+| `STORAGE_ENDPOINT`     | ні для старту API             | S3 API. Порожньо — справжній AWS. Локальний стенд: `http://127.0.0.1:21160` (Garage). Не секрет                                                                                                 |
+| `STORAGE_REGION`       | ні для старту API             | Регіон підпису. Для стенда — `garage`, має збігатися з `s3_region` у `garage/garage.toml`                                                                                                       |
+| `STORAGE_BUCKET`       | ні для старту API             | Бакет `hw26-files`. Не секрет                                                                                                                                                                   |
+| `STORAGE_ACCESS_KEY`   | ні для старту API             | Ключ доступу до сховища (`GK` + 24 hex). **Джерело: сховище**. У `.env.example` порожньо. dev і prod — різні пари                                                                                |
+| `STORAGE_SECRET_KEY`   | ні для старту API             | Секрет того ж ключа (64 hex). **Джерело: сховище**. Ним підписується presigned URL                                                                                                              |
 
 HTTP rate-limit: **ковзне вікно** в Redis (Lua + ZSET) — не дозволяємо сплеск до 2× ліміту на межі фіксованого вікна; лічильник спільний для всіх подів.
 
@@ -757,7 +762,8 @@ Infisical **не** є залежністю Nest. Тека `infisical/` — ло�
 
 Пароль Postgres **лишається у файлі** навіть з Infisical: зміна секрету в vault дає лише новий env-знімок після рестарту процесу; ротація без рестарту на env не працює.
 
-**Що кладемо в сейф зараз:** `CURSOR_HMAC_SECRET`, `JWT_KID`, `JWT_PRIVATE_KEY`, `JWT_PUBLIC_KEY`, `REFRESH_TOKEN_PEPPER`.  
+**Що кладемо в сейф зараз:** `CURSOR_HMAC_SECRET`, `JWT_KID`, `JWT_PRIVATE_KEY`, `JWT_PUBLIC_KEY`, `REFRESH_TOKEN_PEPPER`, `STORAGE_ACCESS_KEY`, `STORAGE_SECRET_KEY`.  
+Пара сховища в `dev` і `prod` різна, як і ключі JWT. Endpoint, region і bucket — несекрети, їх можна тримати в `.env`.  
 Несекрети (`PORT`, `DB_URL`, `LOG_LEVEL`, …) зручно тримати в локальному `.env`. Dev і prod мають тримати різні пари підпису і різний перець.
 
 ### Self-host (інший ПК / чистий clone)

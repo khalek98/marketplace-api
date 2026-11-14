@@ -47,6 +47,7 @@
     "report": "bash scripts/with-secrets.sh dev node dist/report.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1169.0",
     "@nestjs/common": "^11.2.3",
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.2.3",

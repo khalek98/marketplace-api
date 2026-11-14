@@ -23,6 +23,33 @@ export const envSchema = z.object({
 
 export type Env = z.infer<typeof envSchema>;
 
+// Not part of `validate()`. Orders and login must boot when Garage is absent.
+// Upload code calls `readStorageEnv()` and fails there if a key is missing.
+export const storageEnvSchema = z.object({
+  // Empty means real AWS. A set endpoint is the local Garage stand.
+  STORAGE_ENDPOINT: z
+    .string()
+    .default("")
+    .refine((value) => value === "" || /^https?:\/\//.test(value), "must be an http(s) URL or empty"),
+  STORAGE_REGION: z.string().min(1),
+  STORAGE_BUCKET: z.string().min(1),
+  STORAGE_ACCESS_KEY: z.string().min(1),
+  STORAGE_SECRET_KEY: z.string().min(1),
+});
+
+export type StorageEnv = z.infer<typeof storageEnvSchema>;
+
+export function readStorageEnv(raw: Record<string, unknown> = process.env): StorageEnv {
+  const parsed = storageEnvSchema.safeParse(raw);
+  if (!parsed.success) {
+    const lines = parsed.error.issues.map((issue) => `  ${issue.path.join(".") || "(root)"}: ${issue.message}`).join("\n");
+    throw new Error(
+      `Invalid storage configuration:\n${lines}\nSet STORAGE_* from the vault (or export them with SKIP_VAULT=1).`,
+    );
+  }
+  return parsed.data;
+}
+
 export function validate(raw: Record<string, unknown>): Env {
   const parsed = envSchema.safeParse(raw);
   if (!parsed.success) {

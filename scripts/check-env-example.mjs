@@ -1,10 +1,11 @@
 import { readFileSync } from "node:fs";
 import { parse } from "dotenv";
-import { envSchema } from "../dist/config/env.schema.js";
+import { envSchema, storageEnvSchema } from "../dist/config/env.schema.js";
 
 const envExamplePath = new URL("../.env.example", import.meta.url);
 
-const schemaKeys = Object.keys(envSchema.shape).sort();
+// Storage keys live in their own schema so a missing Garage does not stop login.
+const schemaKeys = [...Object.keys(envSchema.shape), ...Object.keys(storageEnvSchema.shape)].sort();
 const fileKeys = Object.keys(parse(readFileSync(envExamplePath))).sort();
 
 const missing = schemaKeys.filter((k) => !fileKeys.includes(k));
