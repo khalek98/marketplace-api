@@ -7,6 +7,7 @@
     "build": "rm -rf dist && tsc",
     "start": "npm run build && node dist/main.js",
     "start:cluster-app": "node dist/cluster-app.js",
+    "image:build": "docker build -f docker/Dockerfile --secret id=npmtoken,src=.npm_token -t marketplace-api:local .",
     "start:vault": "bash scripts/with-secrets.sh dev node dist/main.js",
     "start:dev": "nest start --watch",
     "start:infisical": "bash infisical/run.sh",
