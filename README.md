@@ -698,7 +698,7 @@ Slug `prod` у сховищі повернув ту саму пару, що й d
 
 ## Files
 
-Байтів файла в API немає. `POST /uploads/intent` під тим самим access-гардом, що й замовлення, перевіряє `content_type` (`image/jpeg`, `image/png`, `image/webp`) і сам збирає ключ `uploads/{userId}/{uuid}.{ext}`. Поле `filename` відкидається: `../../etc/passwd` у ключ не потрапляє. Клієнт кладе тіло presigned PUT-ом прямо в бакет. `POST /uploads/:id/commit` робить `HeadObject` і лише тоді ставить `completed`. Немає об’єкта — 409, рядок лишається `pending`.
+Байтів файла в API немає. `POST /uploads/intent` під тим самим access-гардом, що й замовлення, перевіряє `content_type` (`image/jpeg`, `image/png`, `image/webp`), вимагає `size_bytes` (стеля **100 МіБ**) і сам збирає ключ `uploads/{userId}/{uuid}.{ext}`. Поле `filename` відкидається: `../../etc/passwd` у ключ не потрапляє. Клієнт кладе тіло presigned PUT-ом прямо в бакет. `POST /uploads/:id/commit` робить `HeadObject`, звіряє розмір із заявленим і лише тоді ставить `completed`. Немає об’єкта або інший розмір — 409, рядок лишається `pending`.
 
 Журнал — таблиця `files` (міграція `AddFiles`). Список файлів користувача читається з неї, не через `ListObjects`.
 
@@ -728,11 +728,11 @@ Slug `prod` у сховищі повернув ту саму пару, що й d
 
 ### Роздача
 
-Публічний ассет — `assets/{name}.{8 hex sha256}.{ext}`, заголовок `Cache-Control: public, max-age=31536000, immutable` стоїть на об’єкті в момент запису. Edge (`src/edge.ts`, порт `21162`) забирає об’єкт своїми креденшелами і кешує його в пам’яті. Другий запит того самого ключа віддає `X-Cache: HIT` і в бакет не ходить. Новий вміст публікується під новим хешем. Старий URL доживає свій `max-age`, інвалідації немає.
+Публічний ассет — `assets/{name}.{8 hex sha256}.{ext}`, заголовок `Cache-Control: public, max-age=31536000, immutable` стоїть на об’єкті в момент запису. Edge (`src/edge.ts`, порт `21162`) віддає **лише** ключі під `assets/`; `uploads/…` отримує 404 і не обходить гард `GET /files/:id`. Edge забирає ассет своїми креденшелами і кешує його в пам’яті. Другий запит того самого ключа віддає `X-Cache: HIT` і в бакет не ходить. Новий вміст публікується під новим хешем. Старий URL доживає свій `max-age`, інвалідації немає.
 
 Це локальний edge, не CloudFront. Анонімний GET у бакет дає 403. Website-режим Garage не вмикається.
 
-Для справжнього CloudFront та сама ідея — бакет закритий, читає лише дистрибуція. Політика в `policies/cloudfront-oac-bucket-policy.json`. На Garage вона не застосовується: bucket policy там відповідає 501. Без `Condition` / `AWS:SourceArn` принципал `cloudfront.amazonaws.com` відкрив би бакет будь-якій дистрибуції у світі.
+Для справжнього CloudFront та сама ідея — бакет закритий, читає лише дистрибуція, і лише префікс `assets/`. Політика в `policies/cloudfront-oac-bucket-policy.json`. На Garage вона не застосовується: bucket policy там відповідає 501. Без `Condition` / `AWS:SourceArn` принципал `cloudfront.amazonaws.com` відкрив би бакет будь-якій дистрибуції у світі.
 
 ```json
 {
@@ -743,7 +743,7 @@ Slug `prod` у сховищі повернув ту саму пару, що й d
       "Effect": "Allow",
       "Principal": { "Service": "cloudfront.amazonaws.com" },
       "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::hw26-files/*",
+      "Resource": "arn:aws:s3:::hw26-files/assets/*",
       "Condition": {
         "StringEquals": {
           "AWS:SourceArn": "arn:aws:cloudfront::111122223333:distribution/E1234567890ABC"
@@ -859,7 +859,7 @@ bash scripts/with-secrets.sh dev bash scripts/backup.sh
 bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh
 ```
 
-Файли — після `npm run build`. Garage і проксі S3 вже підняті тим самим `docker compose up -d --wait` (порт `21160`). `npm run demo:upload`, потім `npm run demo:multipart` двічі, потім `npm run demo:cdn`. Що означають числа — у секції [Files](#files).
+Файли — після `npm run build && npm run migrate` (без migrate таблиці `users` / `files` ще немає). Garage і проксі S3 вже підняті тим самим `docker compose up -d --wait` (порт `21160`). `npm run demo:upload`, потім `npm run demo:multipart` двічі, потім `npm run demo:cdn`. Що означають числа — у секції [Files](#files).
 
 ## Optional: Infisical
 
@@ -948,4 +948,5 @@ docker compose -f infisical/docker-compose.yml down
 - **2026-11-04 (HW-22):** transactional outbox у тій самій TX, що checkout; relay зі `SKIP LOCKED`; inbox `processed_messages` + `Idempotency-Key` у `api_requests`; демо `demo:outbox|crash-write|crash-relay`. Dual write між Postgres і брокером закрито at-least-once + ідемпотентним ефектом.
 - **2026-11-04 (HW-23):** два Redis (кеш `allkeys-lru` :21140, черга `noeviction` :21141); cache-aside + jitter + single-flight; сесії й rate-limit на queue-Redis; BullMQ (retry, `jobId`, `upsertJobScheduler`); демо `demo:cache|session|ratelimit|queue`.
 - **2026-11-14:** файли йдуть у приватний Garage через presigned `intent`/`commit`; multipart доливає частини після обриву; публічні ассети віддає локальний edge з хешем вмісту в імені. Креденшели сховища — у сейф, dev і prod різні.
+- **2026-11-17:** edge пускає лише `assets/`; `size_bytes` обов’язковий зі стелею 100 МіБ; у Grading для файлів додано `migrate`.
 - Наступні зміни архітектури додаються сюди з причиною та наслідками, а не приховуються переписуванням історії.

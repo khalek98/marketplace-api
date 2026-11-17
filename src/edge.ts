@@ -31,6 +31,13 @@ function keyOf(req: http.IncomingMessage): string {
 }
 
 async function serve(key: string, res: http.ServerResponse): Promise<void> {
+  // Private uploads stay behind GET /files/:id. Edge only serves published assets.
+  if (!key.startsWith("assets/") || key.includes("..")) {
+    res.writeHead(404);
+    res.end();
+    return;
+  }
+
   const hit = cache.get(key);
   if (hit) {
     res.writeHead(200, { ...hit.headers, "x-cache": "HIT" });

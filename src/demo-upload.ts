@@ -111,6 +111,7 @@ async function main(): Promise<void> {
     const empty = await postJson(SECOND_PORT, "/uploads/intent", token, `demo-upload-empty-${randomUUID()}`, {
       content_type: "image/jpeg",
       purpose: "avatar",
+      size_bytes: BYTES.length,
     });
     const emptyBody = empty.json as IntentResponse;
     if (emptyBody.id) {

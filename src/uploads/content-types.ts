@@ -7,6 +7,9 @@ export const READ_PRESIGN_SECONDS = 60;
 /** Photos at or under this size are one PutObject. Larger files are multipart. */
 export const MULTIPART_THRESHOLD_BYTES = 8 * 1024 * 1024;
 
+/** Hard ceiling for intent.size_bytes. Marketplace photos do not need more. */
+export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+
 /** Every part except the last must be at least this big, or Complete returns EntityTooSmall. */
 export const MIN_PART_BYTES = 5 * 1024 * 1024;
 

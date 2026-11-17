@@ -20,6 +20,7 @@ import { createStorageClient } from "../storage/client";
 import { presignGet, presignPut, presignUploadPart } from "../storage/presign";
 import {
   extensionFor,
+  MAX_UPLOAD_BYTES,
   MULTIPART_THRESHOLD_BYTES,
   partCountFor,
   partSizeFor,
@@ -56,7 +57,7 @@ export class UploadsService implements OnModuleInit {
         objectKey,
         status: "pending",
         contentType: parsed.contentType,
-        sizeBytes: parsed.sizeBytes === null ? null : String(parsed.sizeBytes),
+        sizeBytes: String(parsed.sizeBytes),
         uploadId,
         etag: null,
         purpose: parsed.purpose,
@@ -93,7 +94,7 @@ export class UploadsService implements OnModuleInit {
         "object-missing",
       );
     }
-    if (row.sizeBytes !== null && Number(row.sizeBytes) !== head.size) {
+    if (row.sizeBytes === null || Number(row.sizeBytes) !== head.size) {
       throw new ApplicationError(
         409,
         "Size mismatch",
@@ -312,7 +313,7 @@ export class UploadsService implements OnModuleInit {
   }
 
   private async beginMultipart(objectKey: string, parsed: ParsedIntent): Promise<string | null> {
-    if (parsed.sizeBytes === null || parsed.sizeBytes <= MULTIPART_THRESHOLD_BYTES) return null;
+    if (parsed.sizeBytes <= MULTIPART_THRESHOLD_BYTES) return null;
     const created = await createStorageClient().send(
       new CreateMultipartUploadCommand({
         Bucket: readStorageEnv().STORAGE_BUCKET,
@@ -438,24 +439,32 @@ function parseIntent(body: IntentRequest): ParsedIntent {
     );
   }
 
-  let sizeBytes: number | null = null;
-  if (body.size_bytes !== undefined && body.size_bytes !== null) {
-    if (typeof body.size_bytes !== "number" || !Number.isInteger(body.size_bytes) || body.size_bytes < 0) {
-      throw new ApplicationError(400, "Invalid size", "size_bytes must be a non-negative integer.", "invalid-size");
-    }
-    sizeBytes = body.size_bytes;
+  if (typeof body.size_bytes !== "number" || !Number.isInteger(body.size_bytes) || body.size_bytes < 0) {
+    throw new ApplicationError(
+      400,
+      "Invalid size",
+      "size_bytes is required and must be a non-negative integer.",
+      "invalid-size",
+    );
+  }
+  if (body.size_bytes > MAX_UPLOAD_BYTES) {
+    throw new ApplicationError(
+      400,
+      "File too large",
+      `size_bytes must be at most ${MAX_UPLOAD_BYTES} (${MAX_UPLOAD_BYTES / (1024 * 1024)} MiB).`,
+      "file-too-large",
+    );
   }
 
-  return { contentType, extension, purpose: body.purpose, productId, sizeBytes };
+  return { contentType, extension, purpose: body.purpose, productId, sizeBytes: body.size_bytes };
 }
 
 function sameIntent(row: FileRecord, parsed: ParsedIntent): boolean {
-  const storedSize = row.sizeBytes === null ? null : Number(row.sizeBytes);
   return (
     row.contentType === parsed.contentType &&
     row.purpose === parsed.purpose &&
     (row.productId ?? null) === parsed.productId &&
-    storedSize === parsed.sizeBytes
+    Number(row.sizeBytes) === parsed.sizeBytes
   );
 }
 

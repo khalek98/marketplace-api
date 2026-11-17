@@ -1050,6 +1050,7 @@ components:
       required:
         - content_type
         - purpose
+        - size_bytes
       properties:
         content_type:
           type: string
@@ -1068,7 +1069,8 @@ components:
         size_bytes:
           type: integer
           minimum: 0
-          description: Declared size. Above 8 MiB the upload is multipart.
+          maximum: 104857600
+          description: Declared size (required, at most 100 MiB). Above 8 MiB the upload is multipart.
         filename:
           type: string
           description: Ignored. The server generates the object key.

@@ -43,5 +43,5 @@ export type ParsedIntent = {
   extension: string;
   purpose: FilePurpose;
   productId: string | null;
-  sizeBytes: number | null;
+  sizeBytes: number;
 };
