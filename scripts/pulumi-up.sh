@@ -8,6 +8,7 @@ node scripts/require-vault-env.mjs
 
 export PULUMI_BACKEND_URL="${PULUMI_BACKEND_URL:-file://$ROOT/.pulumi}"
 export PULUMI_SKIP_UPDATE_CHECK="${PULUMI_SKIP_UPDATE_CHECK:-true}"
+mkdir -p "$ROOT/.pulumi"
 
 if ! command -v pulumi >/dev/null 2>&1; then
   echo "pulumi CLI not found — install: https://www.pulumi.com/docs/install/" >&2
