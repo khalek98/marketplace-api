@@ -9,6 +9,7 @@
     "start:cluster-app": "node dist/cluster-app.js",
     "image:build": "docker build -f docker/Dockerfile --secret id=npmtoken,src=.npm_token -t marketplace-api:local .",
     "demo:image": "node demo/image.mjs",
+    "scan": "node scripts/scan.mjs",
     "start:vault": "bash scripts/with-secrets.sh dev node dist/main.js",
     "start:dev": "nest start --watch",
     "start:infisical": "bash infisical/run.sh",
