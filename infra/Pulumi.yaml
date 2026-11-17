@@ -1,0 +1,8 @@
+name: marketplace
+runtime:
+  name: nodejs
+  options:
+    typescript: true
+description: >-
+  Marketplace HW-28 cluster workload.
+  Requires: PULUMI_BACKEND_URL=file://… PULUMI_CONFIG_PASSPHRASE=…
