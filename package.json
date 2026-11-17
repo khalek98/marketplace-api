@@ -9,6 +9,7 @@
     "start:cluster-app": "node dist/cluster-app.js",
     "image:build": "docker build -f docker/Dockerfile --secret id=npmtoken,src=.npm_token -t marketplace-api:local .",
     "demo:image": "node demo/image.mjs",
+    "demo:rollout": "node demo/rollout.mjs",
     "scan": "node scripts/scan.mjs",
     "cluster:up": "bash scripts/cluster-up.sh",
     "cluster:down": "bash scripts/cluster-down.sh",
