@@ -309,26 +309,28 @@ npm run demo:queue
 
 Повний контракт — `.env.example`. Реальний `.env` у `.gitignore`.
 
-| Змінна                 | Обовʼязкова                   | Опис                                                                                                                                                                                            |
-| ---------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PORT`                 | так                           | HTTP-порт API                                                                                                                                                                                   |
-| `DB_URL`               | так                           | host/port/db для пулу. **Джерело: сховище** (локально gitignored `.env`; optional Infisical). User/password з URL ігноруються — з `secrets/db_auth`. У git лише фейковий рядок у `.env.example` |
-| `BROKER_URL`           | так                           | AMQP-адреса RabbitMQ (`amqp://…:21130`). **Джерело: сховище** (той самий шлях, що й `DB_URL`). Порт `21131` — лише management UI, не цей URL                                                    |
-| `REDIS_URL`            | так                           | Redis під **кеш** (`redis://…:21140`, `allkeys-lru`). **Джерело: сховище** (той самий шлях, що й `DB_URL`)                                                                                      |
-| `REDIS_QUEUE_URL`      | так                           | Redis під **чергу / сесії / rate-limit** (`redis://…:21141`, `noeviction`). Окремий інстанс — не `REDIS_URL`                                                                                    |
-| `CURSOR_HMAC_SECRET`   | так                           | HMAC для cursor пагінації (без дефолту в схемі — має прийти ззовні)                                                                                                                             |
-| `JWT_KID`              | так                           | Id активного ключа підпису access-токенів (ES256). **Джерело: сховище**. Дефолту в схемі немає                                                                                                  |
-| `JWT_PRIVATE_KEY`      | так                           | Приватний ключ ES256, base64 від PKCS#8 PEM. **Джерело: сховище**. У git і в `.env.example` значення порожнє                                                                                    |
-| `JWT_PUBLIC_KEY`       | так                           | Публічний ключ ES256, base64 від SPKI PEM. **Джерело: сховище**                                                                                                                                 |
-| `REFRESH_TOKEN_PEPPER` | так                           | Перець для HMAC refresh-токена. **Джерело: сховище**. Дефолту немає                                                                                                                             |
-| `DB_AUTH_FILE`         | ні (дефолт `secrets/db_auth`) | Шлях до файла з role + password Postgres (два рядки)                                                                                                                                            |
-| `LOG_LEVEL`            | ні (`info`)                   | `debug` \| `info` \| `warn` \| `error`                                                                                                                                                          |
-| `TIMEOUT_MS`           | ні (`5000`)                   | Таймаут зовнішніх викликів, мс                                                                                                                                                                  |
-| `STORAGE_ENDPOINT`     | ні для старту API             | S3 API. Порожньо — справжній AWS. Локальний стенд: `http://127.0.0.1:21160` (Garage). Не секрет                                                                                                 |
-| `STORAGE_REGION`       | ні для старту API             | Регіон підпису. Для стенда — `garage`, має збігатися з `s3_region` у `garage/garage.toml`                                                                                                       |
-| `STORAGE_BUCKET`       | ні для старту API             | Бакет `hw26-files`. Не секрет                                                                                                                                                                   |
-| `STORAGE_ACCESS_KEY`   | ні для старту API             | Ключ доступу до сховища (`GK` + 24 hex). **Джерело: сховище**. У `.env.example` порожньо. dev і prod — різні пари                                                                               |
-| `STORAGE_SECRET_KEY`   | ні для старту API             | Секрет того ж ключа (64 hex). **Джерело: сховище**. Ним підписується presigned URL                                                                                                              |
+| Змінна                     | Обовʼязкова                   | Опис                                                                                                                                                                                            |
+| -------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                     | так                           | HTTP-порт API                                                                                                                                                                                   |
+| `DB_URL`                   | так                           | host/port/db для пулу. **Джерело: сховище** (локально gitignored `.env`; optional Infisical). User/password з URL ігноруються — з `secrets/db_auth`. У git лише фейковий рядок у `.env.example` |
+| `BROKER_URL`               | так                           | AMQP-адреса RabbitMQ (`amqp://…:21130`). **Джерело: сховище** (той самий шлях, що й `DB_URL`). Порт `21131` — лише management UI, не цей URL                                                    |
+| `REDIS_URL`                | так                           | Redis під **кеш** (`redis://…:21140`, `allkeys-lru`). **Джерело: сховище** (той самий шлях, що й `DB_URL`)                                                                                      |
+| `REDIS_QUEUE_URL`          | так                           | Redis під **чергу / сесії / rate-limit** (`redis://…:21141`, `noeviction`). Окремий інстанс — не `REDIS_URL`                                                                                    |
+| `CURSOR_HMAC_SECRET`       | так                           | HMAC для cursor пагінації (без дефолту в схемі — має прийти ззовні)                                                                                                                             |
+| `JWT_KID`                  | так                           | Id активного ключа підпису access-токенів (ES256). **Джерело: сховище**. Дефолту в схемі немає                                                                                                  |
+| `JWT_PRIVATE_KEY`          | так                           | Приватний ключ ES256, base64 від PKCS#8 PEM. **Джерело: сховище**. У git і в `.env.example` значення порожнє                                                                                    |
+| `JWT_PUBLIC_KEY`           | так                           | Публічний ключ ES256, base64 від SPKI PEM. **Джерело: сховище**                                                                                                                                 |
+| `REFRESH_TOKEN_PEPPER`     | так                           | Перець для HMAC refresh-токена. **Джерело: сховище**. Дефолту немає                                                                                                                             |
+| `DB_AUTH_FILE`             | ні (дефолт `secrets/db_auth`) | Шлях до файла з role + password Postgres (два рядки)                                                                                                                                            |
+| `LOG_LEVEL`                | ні (`info`)                   | `debug` \| `info` \| `warn` \| `error`                                                                                                                                                          |
+| `TIMEOUT_MS`               | ні (`5000`)                   | Таймаут зовнішніх викликів, мс                                                                                                                                                                  |
+| `STORAGE_ENDPOINT`         | ні для старту API             | S3 API. Порожньо — справжній AWS. Локальний стенд: `http://127.0.0.1:21160` (Garage). Не секрет                                                                                                 |
+| `STORAGE_REGION`           | ні для старту API             | Регіон підпису. Для стенда — `garage`, має збігатися з `s3_region` у `garage/garage.toml`                                                                                                       |
+| `STORAGE_BUCKET`           | ні для старту API             | Бакет `hw26-files`. Не секрет                                                                                                                                                                   |
+| `STORAGE_ACCESS_KEY`       | ні для старту API             | Ключ доступу до сховища (`GK` + 24 hex). **Джерело: сховище**. У `.env.example` порожньо. dev і prod — різні пари                                                                               |
+| `STORAGE_SECRET_KEY`       | ні для старту API             | Секрет того ж ключа (64 hex). **Джерело: сховище**. Ним підписується presigned URL                                                                                                              |
+| `APP_DB_PASSWORD`          | так для `npm run up`          | Пароль, який їде в K8s Secret (`secretKeyRef`). **Джерело: сховище** (#11). Без змінної Pulumi-програма падає і називає її                                                                      |
+| `PULUMI_CONFIG_PASSPHRASE` | так для `npm run up`          | Ключ шифрування локального стану Pulumi (`file://.pulumi`). **Джерело: сховище** (#11)                                                                                                          |
 
 HTTP rate-limit: **ковзне вікно** в Redis (Lua + ZSET) — не дозволяємо сплеск до 2× ліміту на межі фіксованого вікна; лічильник спільний для всіх подів.
 
@@ -801,6 +803,46 @@ new-url=200
 content-changed=1
 ```
 
+## Kubernetes
+
+Локальний одновузловий стенд для production-образу й rolling update під навантаженням. Повний Nest + Postgres у kind не піднімаємо: у Deployment крутиться тонкий `dist/cluster-app.js` з того ж образу (ті самі `/healthz`, `/readyz`, warmup, drain на SIGTERM).
+
+**Кластер:** kind **v0.33** (Kubernetes з `kindest/node` образу kind), імʼя `marketplace`. На машині з обмеженою памʼяттю Docker (~4 ГіБ) kind стартує швидше й легше за minikube (порядку **~500–550 МіБ** на control-plane проти відмови minikube нижче `--memory 1800`). Конфіг: `k8s/kind-config.yaml` — hostPort **21190** → NodePort **30190**.
+
+| Змінна                     | Джерело       | Навіщо                                                            |
+| -------------------------- | ------------- | ----------------------------------------------------------------- |
+| `APP_DB_PASSWORD`          | сховище (#11) | пароль у K8s Secret → `secretKeyRef` у контейнері                 |
+| `PULUMI_CONFIG_PASSPHRASE` | сховище (#11) | шифрування локального стану Pulumi (`file://.pulumi`)             |
+| `PULUMI_BACKEND_URL`       | локально / CI | `file://$PWD/.pulumi` — без `pulumi login`                        |
+| `SKIP_VAULT`               | локально / CI | `1` — секрети вже в env; інакше `with-secrets.sh` тягне Infisical |
+
+Команди з кореня репо (після `printf 'dummy-npm-token' > .npm_token`):
+
+```bash
+export SKIP_VAULT=1
+export APP_DB_PASSWORD=…              # зі сховища / локальний export
+export PULUMI_CONFIG_PASSPHRASE=…     # зі сховища / локальний export
+export PULUMI_BACKEND_URL="file://$PWD/.pulumi"
+
+npm run image:build                   # docker/Dockerfile → marketplace-api:local
+npm run cluster:up                    # kind create + kind load docker-image
+npm --prefix infra ci && npx --prefix infra tsc --noEmit
+npm run up                            # Pulumi → Namespace/Deploy/Service/Secret/PDB/HPA
+npm run demo:image
+SCAN_MAX=100 npm run scan
+npm run demo:rollout                  # failed=0 при requests≥5000
+kubectl --context kind-marketplace -n marketplace get pdb marketplace-api \
+  -o jsonpath='{.status.disruptionsAllowed}{"\n"}'   # ≥1 до demo:pdb
+npm run demo:pdb                      # evict-1=201, evict-2=429
+npm run destroy && npm run cluster:down
+```
+
+`kind load` обовʼязковий: образ на хості сам у вузол не потрапляє (`ErrImagePull`).
+
+**HPA:** у маніфесті `autoscaling/v2`, `minReplicas ≥ 2`, метрика CPU. У kind **немає metrics-server**, тому `kubectl get hpa` показує `cpu: <unknown>/…%` і репліки HPA не рухає — це очікувано. У бойовому кластері з metrics-server одночасно тримати `spec.replicas` у Deployment **і** HPA — конфлікт володіння полем `replicas` (пишуть і програма, і контролер).
+
+**Секрети рантайму в проді (назви, без установки тут):** External Secrets Operator (ESO) синхронізує зовнішнє сховище в K8s Secret; Secrets Store CSI Driver монтує секрет у под як том. Обидва шляхи — замість копипасти значень у git/маніфест. На цьому стенді значення приходить зі сховища #11 через `scripts/with-secrets.sh` → Pulumi створює Secret → Deployment лише посилається (`secretKeyRef`).
+
 ## Grading
 
 Свіжий клон, чиста БД, без доступу до Infisical. Дев-креденшели стенда (не секрет хмари):
@@ -860,6 +902,24 @@ bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh
 ```
 
 Файли — після `npm run build && npm run migrate` (без migrate таблиці `users` / `files` ще немає). Garage і проксі S3 вже підняті тим самим `docker compose up -d --wait` (порт `21160`). `npm run demo:upload`, потім `npm run demo:multipart` двічі, потім `npm run demo:cdn`. Що означають числа — у секції [Files](#files).
+
+### Kubernetes stand (з нуля)
+
+Без доступу до Infisical; локальний file-backend Pulumi. Секрети етапу збірки й рантайму — export + bait-файл (у git їх немає). Деталі стенда — [Kubernetes](#kubernetes).
+
+```bash
+export SKIP_VAULT=1
+export APP_DB_PASSWORD=grader-secret
+export PULUMI_CONFIG_PASSPHRASE=hw28-grading
+export PULUMI_BACKEND_URL="file://$PWD/.pulumi"
+npm --prefix infra ci
+printf 'dummy-npm-token' > .npm_token
+npm run image:build
+npm run cluster:up
+npm run up
+```
+
+Далі: `npm run demo:image`, `SCAN_MAX=-1 npm run scan` / `SCAN_MAX=99999 npm run scan`, `npm run demo:rollout`, статус PDB → `npm run demo:pdb`. Знести: `npm run destroy && npm run cluster:down`.
 
 ## Optional: Infisical
 

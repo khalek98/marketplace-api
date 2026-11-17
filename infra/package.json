@@ -1,0 +1,14 @@
+{
+  "name": "marketplace-infra",
+  "private": true,
+  "description": "Pulumi program: marketplace cluster workload (HW-28)",
+  "main": "index.ts",
+  "dependencies": {
+    "@pulumi/kubernetes": "^4.33.0",
+    "@pulumi/pulumi": "^3.144.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.8.0"
+  }
+}

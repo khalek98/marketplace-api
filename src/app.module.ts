@@ -8,11 +8,12 @@ import { validate } from "./config/env.schema";
 import { DatabaseModule } from "./database/database.module";
 import { OrdersModule } from "./orders/orders.module";
 import { ProductsModule } from "./products/products.module";
+import { ReadinessService } from "./readiness.service";
 import { UploadsModule } from "./uploads/uploads.module";
 
 @Module({
   controllers: [AppController],
-  providers: [BrokerBootstrap],
+  providers: [BrokerBootstrap, ReadinessService],
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,

@@ -2,6 +2,11 @@ node_modules/
 dist/
 .git
 test/
+course-materials/
+.cursor/
+.vscode/
+.pulumi/
+.npm_token
 
 npm-debug.log
 .gitignore
