@@ -12,3 +12,4 @@ secrets/*
 .DS_Store
 .npm_token
 .pulumi/
+infra/Pulumi.*.yaml
