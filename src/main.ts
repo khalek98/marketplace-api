@@ -3,6 +3,7 @@ import { createApp } from "./create-app";
 import { Env, validate } from "./config/env.schema";
 import { loadSigningKeys } from "./config/signing-keys";
 import { ConfigService } from "@nestjs/config";
+import { ReadinessService } from "./readiness.service";
 
 function loadLocalEnvFile(): void {
   try {
@@ -24,7 +25,17 @@ async function bootstrap() {
   const app = await createApp();
   const config = app.get(ConfigService<Env, true>);
   const port = config.get("PORT", { infer: true });
+  const readiness = app.get(ReadinessService);
+
+  // Optional warmup before listen — mirrors cluster-app; default 0 for local DX.
+  const warmupMs = Number(process.env.WARMUP_MS ?? 0);
+  if (warmupMs > 0) {
+    console.log(`[warmup] ${warmupMs} ms — listener not open yet`);
+    await new Promise((resolve) => setTimeout(resolve, warmupMs));
+  }
+
   await app.listen(port);
+  readiness.markReady();
   console.log(`Marketplace API listening on http://localhost:${port}`);
 }
 

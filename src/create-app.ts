@@ -21,7 +21,7 @@ export function configureApp(app: INestApplication): INestApplication {
       validateResponses: true,
       // Ops probes and the Engine.IO handshake are not in the spec.
       // The SSE stream never ends, so response validation would buffer it forever.
-      ignorePaths: /^\/(health|db)$|^\/socket\.io(?:\/|$)|^\/orders\/[^/]+\/events$/,
+      ignorePaths: /^\/(health|healthz|readyz|db)$|^\/socket\.io(?:\/|$)|^\/orders\/[^/]+\/events$/,
     }),
   );
 
